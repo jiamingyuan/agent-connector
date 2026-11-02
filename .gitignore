@@ -1,0 +1,10 @@
+runtime/
+config.json
+config.claude.json
+workspace/CLAUDE.md
+*.plist
+.DS_Store
+node_modules/
+.env
+.env.*
+!.env.example
