@@ -55,16 +55,22 @@ node bridge.mjs
 
 Codex 调用使用 `workspace-write` 沙箱和不交互审批策略；`skip_host_skill_discovery` 是 Codex CLI 开发中功能，CLI 版本变化后需验证兼容性。Claude Code 的工具访问取决于所选权限模式、配置及运行用户实际权限。
 
-## 服务脚本
+## 长期运行（Debian）
 
-仓库提供 macOS LaunchAgent 辅助脚本，但它们包含原部署环境的路径和服务标签假设，使用前必须检查并按自己的环境调整：
+`service.mjs` 只支持 Debian，在源码目录原地运行桥接程序，崩溃后 15 秒自动重启：
 
-- `service.mjs` 面向本机 Codex，`install` 会复制源码和配置、设置专用工作区并启动服务。
-- `container-service.mjs`、`container-runner.mjs` 和 `container-start.sh` 面向特定 Docker 容器布局、容器用户和受保护的服务环境文件。它们不是通用容器安装器；请先核对 Docker 可执行文件、容器名称、路径、用户 ID 和启动凭证的配置。
+```bash
+node service.mjs install    # 检查配置并启动服务
+node service.mjs status     # 运行状态和 runtime/status.json
+node service.mjs logs       # 跟踪日志
+node service.mjs restart    # 修改代码或配置后重启
+node service.mjs stop | start | uninstall
+```
 
-两套脚本都支持 `install`、`status`、`start`、`stop` 和 `restart`；重新安装或重启会中断正在执行的任务。建议先用前台方式验证配置，再按需要部署服务。
-
-容器脚本的 `install` 从 `config.claude.json` 和 `workspace/CLAUDE.md` 读取部署配置。全新安装时，可分别从 `config.claude.example.json` 和 `workspace/CLAUDE.example.md` 复制、修改这些文件；如已有文件，请先检查后再操作，避免覆盖现有设置。`workspace/CLAUDE.md` 是 Agent 的本地指引，不纳入版本控制。
+- PID 1 是 systemd 时，安装为 `/etc/systemd/system/lark-agent-bridge.service`，开机自启，日志在 `journalctl -u lark-agent-bridge`。
+- 没有 systemd（如 Docker 容器）时，改用内置守护进程，日志写入 `runtime/bridge.log`。这种模式不会随容器重启自动启动，容器重启后需再次执行 `node service.mjs start`。
+- 使用 Claude 后端且工作区没有 `CLAUDE.md` 时，安装会从 `workspace/CLAUDE.example.md` 复制一份；已有文件不会被覆盖。
+- 重启或停止会中断正在执行的任务。不要同时用 `node bridge.mjs` 前台运行同一配置。
 
 ## 测试
 

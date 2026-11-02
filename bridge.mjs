@@ -37,7 +37,11 @@ function save() {
   state.seen = [...seen].slice(-3000);
   atomicJson(stateFile, state);
 }
-function log(type, fields = {}) { console.log(JSON.stringify({ time: new Date().toISOString(), type, ...fields })); }
+function log(type, fields = {}) {
+  // A caller's `type` field (error subtype) must not overwrite the event name.
+  const { type: detail, ...rest } = fields;
+  console.log(JSON.stringify({ time: new Date().toISOString(), type, ...(detail === undefined ? {} : { detail }), ...rest }));
+}
 function status() {
   atomicJson(statusFile, { pid: process.pid, startedAt, updatedAt: new Date().toISOString(), ready,
     active: active.size, queued: processingCount, sessionCount: Object.keys(state.sessions).length,
@@ -76,13 +80,35 @@ function runLark(args, timeoutMs = 40_000, cwd = root) {
   });
 }
 
+// Lark errors that can never succeed on retry (230011: the original message was withdrawn).
+const PERMANENT_REPLY_ERRORS = new Set([230011]);
+function dropFromOutbox(entry) {
+  state.outbox = state.outbox.filter(item => item.key !== entry.key);
+  save(); status();
+}
 async function flushOutbox() {
+  // A failing reply only holds back later parts for the same message, so one stuck
+  // reply cannot block answers to other messages.
+  const blocked = new Set();
+  let firstError;
   for (const entry of [...state.outbox]) {
-    await runLark(replyArgs(entry));
-    state.outbox = state.outbox.filter(item => item.key !== entry.key);
-    save();
+    if (blocked.has(entry.messageId)) continue;
+    try {
+      await runLark(replyArgs(entry));
+    } catch (error) {
+      if (PERMANENT_REPLY_ERRORS.has(error.detail?.code)) {
+        dropFromOutbox(entry);
+        log('reply_dropped', { messageId: entry.messageId, kind: entry.kind, code: error.detail.code });
+        continue;
+      }
+      blocked.add(entry.messageId);
+      firstError ||= error;
+      continue;
+    }
+    dropFromOutbox(entry);
     log('reply_sent', { messageId: entry.messageId, kind: entry.kind });
   }
+  if (firstError) throw firstError;
 }
 let sending = Promise.resolve();
 function reply(event, text, kind = 'answer') {
