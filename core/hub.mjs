@@ -45,10 +45,11 @@ export function createHub({ config, agent, channel, runtime, log }) {
     atomicJson(statusFile, { pid: process.pid, startedAt, updatedAt: new Date().toISOString(), ready,
       active: active.size, queued: processingCount, sessionCount: Object.keys(state.sessions).length,
       attachedSessions: Object.keys(state.attached).length,
-      ...(agent.modes ? { defaultPermissionMode: config.claudePermissionMode || 'auto', modeOverrides: Object.keys(state.modes).length } : {}),
+      ...(agent.modes ? { defaultPermissionMode: defaultMode(), modeOverrides: Object.keys(state.modes).length } : {}),
       pendingReplies: state.outbox.length, botName: config.botName, workspace: config.workspace,
       agent: agent.id, channel: channel.id, agentName, turnTimeoutMs: config.turnTimeoutMs });
   }
+  const defaultMode = () => { try { return agent.modes.resolve(); } catch { return 'invalid'; } };
   const superseded = (message, generation) => stopping || generation !== (generations.get(message.chatId) || 0);
   const logReplyError = e => log('reply_error', { type: e.detail?.subtype || e.name });
 
@@ -111,7 +112,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
     if (target.kind === 'attached') {
       const current = state.attached[chatId];
       if (!current || (current.id !== target.id && current.id !== id)) return;
-      if (current.id !== id) current.file = path.join(path.dirname(current.file), `${id}.jsonl`);
+      if (current.id !== id && current.file) current.file = sessions.fileFor?.(current.file, id) ?? current.file;
       Object.assign(current, { id, updatedAt });
     } else state.sessions[chatId] = { id, updatedAt };
     save();
@@ -233,7 +234,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
   }
   // Checked before every turn in a selected session.
   function attachedProblem(target) {
-    if (!fs.existsSync(target.file)) return `会话「${target.name}」的记录已不存在，无法继续。发 /exit 回到 workspace 会话。`;
+    if (target.file && !fs.existsSync(target.file)) return `会话「${target.name}」的记录已不存在，无法继续。发 /exit 回到 workspace 会话。`;
     if (!fs.existsSync(target.cwd)) return `会话目录 ${target.cwd} 已不存在，无法继续。发 /exit 回到 workspace 会话。`;
     if (sessions?.running().get(target.id)?.busy) {
       return '这个会话正在终端里执行任务，这条消息没有发出。等终端任务结束后重发，或发 /exit 回到 workspace 会话。';
@@ -246,24 +247,24 @@ export function createHub({ config, agent, channel, runtime, log }) {
   function modeOverview(current, fallback) {
     return [`当前权限模式：${current}${current === fallback ? '（默认）' : ''}`, '',
       ...Object.entries(modes.descriptions).map(([mode, text]) => `${mode}${mode === fallback ? '（默认）' : ''}：${text}`), '',
-      '发送 /mode 模式名 切换（bypassPermissions 可简写为 bypass），只影响这个聊天，重启后保留。'].join('\n');
+      `发送 /mode 模式名 切换${modes.hint ? `（${modes.hint}）` : ''}，只影响这个聊天，重启后保留。`].join('\n');
   }
   function changeMode(message, query) {
     if (!modes) return reply(message, `权限模式切换目前不支持 ${agentName}。`, 'mode');
     let fallback, current;
     try { fallback = modes.resolve(); current = modes.resolve(state.modes[message.chatId]); }
-    catch { return reply(message, 'config.json 中的 claudePermissionMode 无效，请修正后重启服务。', 'mode'); }
+    catch { return reply(message, 'config.json 中的默认权限模式无效，请修正后重启服务。', 'mode'); }
     if (!query) return reply(message, modeOverview(current, fallback), 'mode');
     const mode = modes.find(query);
     if (!mode) return reply(message, `没有「${safeLabel(query)}」这个模式。\n\n${modeOverview(current, fallback)}`, 'mode');
     // Group members can see replies; a group is not where every safeguard should be switched off.
-    if (mode === 'bypassPermissions' && message.chatType !== 'private') return reply(message, '群聊里不能切换到 bypassPermissions，请在私聊中使用。', 'mode');
+    if (modes.privateOnly?.includes(mode) && message.chatType !== 'private') return reply(message, `群聊里不能切换到 ${mode}，请在私聊中使用。`, 'mode');
     if (mode === current) return reply(message, `当前已经是 ${mode} 模式。`, 'mode');
     if (mode === fallback) delete state.modes[message.chatId]; else state.modes[message.chatId] = mode;
     save(); status();
     log('mode_changed', { chatId: message.chatId, messageId: message.id, mode });
     return reply(message, `已切换到 ${mode} 模式${mode === fallback ? '（默认）' : ''}：${modes.descriptions[mode]}。`
-      + (mode === 'bypassPermissions' ? `\n用完记得发 /mode ${fallback} 切回。` : ''), 'mode');
+      + (modes.privateOnly?.includes(mode) ? `\n用完记得发 /mode ${fallback} 切回。` : ''), 'mode');
   }
   function modeLabel(chatId) {
     try {

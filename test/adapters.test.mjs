@@ -14,14 +14,14 @@ test('config picks adapters by name and keeps the older backend setting working'
   assert.equal(agentId({}), 'codex');
   assert.equal(agentId({ agent: 'claude-code', backend: 'codex' }), 'claude-code');
   assert.equal(channelId({}), 'lark');
-  await assert.rejects(loadAgent({ agent: 'gpt' }), /Unknown agent "gpt"; known: claude-code, codex/);
+  await assert.rejects(loadAgent({ agent: 'gpt' }), /Unknown agent "gpt"; known: claude-code, codex, example/);
   await assert.rejects(loadChannel({ channel: 'slack' }), /Unknown channel "slack"; known: lark/);
 });
 
 test('agents expose identity, capabilities and runTurn; optional features are complete when present', async () => {
-  for (const id of ['claude-code', 'codex']) {
+  for (const id of ['claude-code', 'codex', 'example']) {
     const module = await loadAgent({ ...base, agent: id });
-    assert.deepEqual(module.requiredBins({ ...base }), [id === 'codex' ? '/bin/codex' : '/bin/claude']);
+    assert.deepEqual(module.requiredBins({ ...base }), { 'claude-code': ['/bin/claude'], codex: ['/bin/codex'], example: [] }[id]);
     const agent = module.createAgent({ ...base }, context);
     assert.equal(agent.id, id);
     assert.equal(typeof agent.displayName, 'string');

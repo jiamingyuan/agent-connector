@@ -8,9 +8,9 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 
-// The entry file plus the hub and every adapter folder.
-export const sources = ['bridge.mjs', 'core', 'claude-code-agent', 'codex-agent', 'lark-channel'];
+// The entry file plus the hub and every adapter folder (<name>-agent/, <name>-channel/).
 const sourceDir = path.dirname(fileURLToPath(new URL('../bridge.mjs', import.meta.url)));
+export const sources = ['bridge.mjs', 'core', ...(await fs.readdir(sourceDir)).filter(name => /-(agent|channel)$/.test(name))];
 
 export async function copySources(root) {
   for (const name of sources) await fs.cp(path.join(sourceDir, name), path.join(root, name), { recursive: true });

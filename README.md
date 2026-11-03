@@ -67,9 +67,10 @@ lark-channel/     ◀──回复──  core/     ◀──最终回答──  
 | `core/` | 中枢 `hub.mjs`：按聊天排队、去重、回复发件箱与重试、聊天状态，以及上面全部指令。`cli-turn.mjs` 是命令行类 Agent 共用的进程运行器，`text.mjs` 负责回复拆分和会话名标题。不含任何渠道或 Agent 的细节。 |
 | `lark-channel/` | 飞书：`lark-cli` 长连接收 `im.message.receive_v1`、过滤非 owner 和过期消息、去掉 @机器人、发回复、加表情、下载图片。 |
 | `claude-code-agent/` | Claude Code：运行对话、权限模式、`/usage`、本机会话列表与前情梗概。 |
-| `codex-agent/` | Codex：运行对话（仅文字）。 |
+| `codex-agent/` | Codex：运行对话（仅文字），也是基于 `core/cli-turn.mjs` 的最小命令行 Agent 示例。 |
+| `example-agent/` | 模板：不依赖外部程序的回声 Agent，复制改名即可开始接入；也可配置 `"agent": "example"` 不花模型额度地测试渠道。 |
 
-中枢只通过下面两个接口和两端交互，接口的完整定义见 [core/README.md](core/README.md)。
+中枢只通过下面两个接口和两端交互。下面是摘要；**接入新模块时请读 [core/README.md](core/README.md)**，那里有接入步骤、每个参数和返回值的含义、可选功能的字段、配置与测试约定。
 
 **渠道接口**：负责收发消息，并把各平台的消息转换成统一格式交给中枢。
 
@@ -103,10 +104,10 @@ lark-channel/     ◀──回复──  core/     ◀──最终回答──  
 
 ### 扩展新模块
 
-1. 新建目录，渠道命名为 `<名称>-channel/`，Agent 命名为 `<名称>-agent/`，在 `index.mjs` 导出 `requiredBins(config)` 和 `createChannel(config, context)` 或 `createAgent(config, context)`。
-2. 在 `core/registry.mjs` 登记目录名，`config.json` 里用 `channel` / `agent` 选择。
-3. 命令行类 Agent 可以直接用 `core/cli-turn.mjs` 的 `runCliTurn`，只需提供命令、标准输入和事件解析函数。
-4. `npm test` 中的 `test/adapters.test.mjs` 会检查所有已登记模块是否满足接口；为新模块补上自己的测试。
+1. 复制 `example-agent/` 为 `<名称>-agent/`（渠道则新建 `<名称>-channel/`，参考 `lark-channel/`），在 `index.mjs` 导出 `requiredBins(config)` 和 `createAgent(config, context)` / `createChannel(config, context)`。
+2. 在 `core/registry.mjs` 登记，`config.json` 里用 `agent` / `channel` 选择；模块自己的配置项放在 `config.json` 顶层，以模块名为前缀（如 `geminiBin`）。
+3. 命令行类 Agent 直接用 `core/cli-turn.mjs` 的 `runCliTurn`，只需提供命令、标准输入和逐行事件解析函数。
+4. `npm test`：`test/adapters.test.mjs` 自动检查接口；用 `test/harness.mjs` 的 `runBridge` 写端到端测试。详见 [core/README.md · 接入步骤](core/README.md#接入步骤)。
 
 ## 前置条件
 
@@ -125,7 +126,7 @@ cp config.example.json config.json          # 或 Codex
 
 | 字段 | 说明 |
 | --- | --- |
-| `agent` | `claude-code` 或 `codex`。旧字段 `backend`（`claude` / `codex`）仍然有效；都省略时使用 Codex。 |
+| `agent` | `claude-code`、`codex` 或 `example`（模板回声 Agent）。旧字段 `backend`（`claude` / `codex`）仍然有效；都省略时使用 Codex。 |
 | `channel` | 目前只有 `lark`，省略时即为 `lark`。 |
 | `profile` | 飞书 CLI 的应用 profile。 |
 | `ownerOpenId` | 唯一允许向机器人发出请求的用户 open ID。 |

@@ -1,4 +1,5 @@
-// Which Lark events reach the hub, and the request text after removing the bot mention.
+// Lark event and lark-cli details: which events reach the hub, the request text after removing
+// the bot mention, and the arguments for sending one queued reply part.
 export function eventDecision(event, config, now = Date.now()) {
   if (event.type !== 'im.message.receive_v1') return 'event_type';
   if (event.sender_type !== 'user') return 'sender_type';
@@ -28,4 +29,9 @@ export function messageText(event, config) {
     }
   }
   return text;
+}
+
+export function replyArgs(entry) {
+  return ['im', '+messages-reply', '--as', 'bot', '--message-id', entry.messageId,
+    entry.format === 'markdown' ? '--markdown' : '--text', entry.text, '--idempotency-key', entry.key];
 }

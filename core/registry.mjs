@@ -3,6 +3,8 @@
 const agents = {
   'claude-code': () => import('../claude-code-agent/index.mjs'),
   codex: () => import('../codex-agent/index.mjs'),
+  // Template and smoke-test agent: echoes the request, needs no external program.
+  example: () => import('../example-agent/index.mjs'),
 };
 const channels = {
   lark: () => import('../lark-channel/index.mjs'),

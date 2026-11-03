@@ -3,8 +3,7 @@
 // the hub and sends the hub's replies back as the bot.
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { eventDecision, messageText } from './events.mjs';
-import { replyArgs } from './reply.mjs';
+import { eventDecision, messageText, replyArgs } from './protocol.mjs';
 import { prepareImages } from './images.mjs';
 
 export const requiredBins = config => [config.larkBin];
