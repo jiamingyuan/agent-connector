@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { imageKeys, imageMediaType, imageLimits, prepareImages } from '../images.mjs';
+import { imageKeys, imageMediaType, imageLimits, prepareImages } from '../lark-channel/images.mjs';
 
 const jpeg = Buffer.from([255, 216, 255, 224, 0, 0]);
 test('extract image resources from rich text, raw image and multilingual post, preserving order', () => {

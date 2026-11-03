@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { eventDecision, messageText, splitText, splitMarkdown, replyArgs, replyKey, codexArgs } from '../core.mjs';
+import { splitText, splitMarkdown, replyParts, replyKey } from '../core/text.mjs';
+import { eventDecision, messageText } from '../lark-channel/events.mjs';
+import { replyArgs } from '../lark-channel/reply.mjs';
+import { codexArgs } from '../codex-agent/args.mjs';
 
 const now = Date.now();
 const config = { ownerOpenId: 'ou_owner', maxEventAgeMs: 300_000, workspace: '/tmp/workspace' };
@@ -81,4 +84,16 @@ test('oversized Markdown code blocks have complete fences and bounded UTF-8 mess
   assert(parts.length > 1);
   assert(parts.every(part => Buffer.byteLength(part) <= 500 && part.startsWith('```text\n') && part.endsWith('\n```')));
   assert.equal(parts.map(part => part.slice(8, -4)).join(''), body);
+});
+test('selected-session replies put the bold session name on its own line above every part', () => {
+  assert.deepEqual(replyParts('回复内容', 'markdown', 'newdash'), ['**newdash**\n回复内容']);
+  assert.deepEqual(replyParts('纯文本', 'text', 'newdash'), ['【newdash】\n纯文本']);
+  assert.deepEqual(replyParts('workspace 回复', 'markdown'), ['workspace 回复']);
+  const long = ('段落内容。'.repeat(200) + '\n\n').repeat(10);
+  const parts = replyParts(long, 'markdown', '会话名');
+  assert(parts.length > 1);
+  assert(parts.every(part => part.startsWith('**会话名**\n') && Buffer.byteLength(part) <= 12_000));
+  assert.equal(parts.map(part => part.slice('**会话名**\n'.length)).join(''), long);
+  const plain = replyParts('中文🙂'.repeat(4000), 'text', '会话名');
+  assert(plain.length > 1 && plain.every(part => part.startsWith('【会话名】\n') && Buffer.byteLength(part) <= 12_000));
 });

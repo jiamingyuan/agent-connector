@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { fileURLToPath } from 'node:url';
+import { copySources } from './harness.mjs';
 
 test('bridge isolates group sessions and enforces configured timeouts and manual stop', { timeout: 15_000 }, async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lark-group-test-'));
@@ -18,8 +18,7 @@ test('bridge isolates group sessions and enforces configured timeouts and manual
     }
     await fs.rm(root, { recursive: true, force: true });
   });
-  const source = path.dirname(fileURLToPath(new URL('../bridge.mjs', import.meta.url)));
-  for (const name of ['bridge.mjs', 'core.mjs', 'backends.mjs', 'images.mjs']) await fs.copyFile(path.join(source, name), path.join(root, name));
+  await copySources(root);
   await fs.mkdir(path.join(root, 'runtime'));
   await fs.writeFile(path.join(root, 'runtime/state.json'), JSON.stringify({ sessions: { oc_private: { id: 'private-session' } }, seen: [], outbox: [] }));
   const base = { type: 'im.message.receive_v1', sender_type: 'user', sender_id: 'ou_owner', create_time: String(Date.now()), message_type: 'text' };

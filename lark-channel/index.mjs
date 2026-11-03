@@ -1,0 +1,97 @@
+// Channel adapter: Feishu / Lark through the official lark-cli. Implements the channel interface in
+// core/README.md: receives im.message.receive_v1 events, filters them, hands normalized messages to
+// the hub and sends the hub's replies back as the bot.
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
+import { eventDecision, messageText } from './events.mjs';
+import { replyArgs } from './reply.mjs';
+import { prepareImages } from './images.mjs';
+
+export const requiredBins = config => [config.larkBin];
+
+// Lark errors that can never succeed on retry (230011: the original message was withdrawn).
+const PERMANENT_REPLY_ERRORS = new Set([230011]);
+const KINDS = { text: 'text', post: 'rich', image: 'image' };
+
+export const formatNote = '[飞书回复格式]\n除非用户本轮另有格式要求：先给结论，短段落之间留空行；简短问题直接回答，不套报告模板。可使用少量加粗、简洁列表、命名链接和带语言标签的代码块；避免多层标题、嵌套列表、长段工具日志和满屏加粗。用户要求文档时，把详细正文写入文档，聊天只给简短结论和文档链接。';
+
+// The hub's channel-neutral view of one Lark message; raw keeps the event for Lark-only work.
+export function normalize(event, config) {
+  return { id: event.message_id, chatId: event.chat_id, chatType: event.chat_type === 'p2p' ? 'private' : 'group',
+    kind: KINDS[event.message_type] || 'other', text: messageText(event, config), raw: event };
+}
+
+export function createChannel(config, { root, env, log }) {
+  const larkArgs = ['--profile', config.profile];
+  let listener, stopped = false, restartTimer, retries = 0;
+
+  function runLark(args, timeoutMs = 40_000, cwd = root) {
+    return new Promise((resolve, reject) => {
+      const child = spawn(config.larkBin, [...larkArgs, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '', stderr = '';
+      const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs);
+      child.stdout.on('data', d => { stdout = (stdout + d).slice(-100_000); });
+      child.stderr.on('data', d => { stderr = (stderr + d).slice(-20_000); });
+      child.on('error', error => { clearTimeout(timer); reject(error); });
+      child.on('close', code => {
+        clearTimeout(timer);
+        let result;
+        try { result = JSON.parse(stdout || stderr); } catch { /* report generic failure below */ }
+        if (code === 0 && result?.ok === true) return resolve(result.data);
+        const error = new Error(`Lark call failed (${result?.error?.subtype || code})`);
+        error.detail = result?.error;
+        error.channel = true;
+        reject(error);
+      });
+    });
+  }
+
+  function start(handlers) {
+    if (stopped) return;
+    listener = spawn(config.larkBin, [...larkArgs, 'event', 'consume', 'im.message.receive_v1', '--as', 'bot'], {
+      cwd: root, env, stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    // Keep this stdin pipe open: lark-cli intentionally exits on stdin EOF.
+    listener.stdin.on('error', () => {});
+    let sawReady = false;
+    const startupTimer = setTimeout(() => { log('listener_ready_timeout'); listener.kill('SIGTERM'); }, 60_000);
+    createInterface({ input: listener.stdout }).on('line', line => {
+      let event;
+      try { event = JSON.parse(line); } catch (e) { log('event_parse_error', { type: e.name }); return; }
+      const reason = eventDecision(event, config);
+      if (reason) { log('event_ignored', { reason, messageId: event.message_id, chatType: event.chat_type }); return; }
+      handlers.message(normalize(event, config));
+    });
+    createInterface({ input: listener.stderr }).on('line', line => {
+      if (line.includes('[event] ready event_key=im.message.receive_v1')) {
+        clearTimeout(startupTimer); sawReady = true; retries = 0; log('listener_ready');
+        handlers.ready();
+      } else if (line.startsWith('{')) {
+        try { const error = JSON.parse(line).error; if (error) log('listener_error', { type: error.type, subtype: error.subtype, message: error.message }); } catch { /* non-JSON diagnostics */ }
+      } else if (/WARN|ERROR|exited|drop/i.test(line)) log('listener_diagnostic', { message: line.slice(0, 500) });
+    });
+    listener.on('error', error => log('listener_spawn_error', { type: error.code }));
+    listener.on('close', code => {
+      clearTimeout(startupTimer); log('listener_closed', { code, sawReady });
+      handlers.closed();
+      if (!stopped) restartTimer = setTimeout(() => start(handlers), Math.min(60_000, 2000 * 2 ** Math.min(retries++, 5)));
+    });
+  }
+
+  return {
+    id: 'lark',
+    displayName: '飞书',
+    richText: config.replyFormat === 'markdown',
+    formatNote,
+    start,
+    stop() { stopped = true; clearTimeout(restartTimer); listener?.stdin.end(); listener?.kill('SIGTERM'); },
+    send: entry => runLark(replyArgs(entry)),
+    isPermanentSendError: error => PERMANENT_REPLY_ERRORS.has(error.detail?.code),
+    acknowledge: message => runLark(['im', 'reactions', 'create', '--as', 'bot',
+      '--params', JSON.stringify({ message_id: message.id }),
+      '--data', JSON.stringify({ reaction_type: { emoji_type: 'SaluteFace' } })], 10_000)
+      .then(() => log('ack_reaction_added', { messageId: message.id, emojiType: 'SaluteFace' }))
+      .catch(error => log('ack_reaction_failed', { messageId: message.id, type: error.detail?.subtype || error.name })),
+    attachments: message => prepareImages(message.raw, config, runLark),
+  };
+}

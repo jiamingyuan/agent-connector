@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { replyKey } from './core.mjs';
+import { replyKey } from '../core/text.mjs';
 
 export const imageLimits = { count: 4, bytes: 5 * 1024 * 1024, totalBytes: 6 * 1024 * 1024 };
 
@@ -65,7 +65,7 @@ export async function prepareImages(event, config, runLark) {
         '--message-id', event.message_id, '--file-key', key, '--type', 'image',
         '--output', path.relative(config.workspace, path.join(directory, `image-${index + 1}`))], 60_000, config.workspace);
     } catch {
-      throw new Error('飞书图片下载失败，请重发原图；若仍失败，请检查 Cora 的消息资源读取权限和网络。');
+      throw new Error('飞书图片下载失败，请重发原图；若仍失败，请检查机器人的消息资源读取权限和网络。');
     }
     const file = path.resolve(config.workspace, downloaded.saved_path || '');
     if (!file.startsWith(directory + path.sep) || fs.realpathSync(file) !== file || !fs.lstatSync(file).isFile()) {

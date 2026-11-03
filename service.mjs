@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { agentId, loadAgent, loadChannel } from './core/registry.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const runtime = path.join(root, 'runtime');
@@ -37,21 +38,21 @@ async function waitFor(check, timeoutMs) {
   return check();
 }
 
-function preflight() {
+async function preflight() {
   if (process.platform !== 'linux' || !fs.readFileSync('/etc/os-release', 'utf8').includes('ID=debian')) {
     throw new Error('This service script supports Debian only.');
   }
   const configFile = path.join(root, 'config.json');
   if (!fs.existsSync(configFile)) throw new Error('Missing config.json; copy config.claude.example.json or config.example.json first.');
   const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-  const agentBin = config.backend === 'claude' ? config.claudeBin : config.codexBin;
-  for (const bin of [config.larkBin, agentBin]) fs.accessSync(bin, fs.constants.X_OK);
+  const bins = [...(await loadChannel(config)).requiredBins(config), ...(await loadAgent(config)).requiredBins(config)];
+  for (const bin of bins) fs.accessSync(bin, fs.constants.X_OK);
   if (!path.isAbsolute(config.workspace)) throw new Error('config.workspace must be an absolute path.');
   fs.mkdirSync(config.workspace, { recursive: true });
   fs.mkdirSync(runtime, { recursive: true, mode: 0o700 });
   // Claude Code reads CLAUDE.md (not AGENTS.md); seed it once, never overwrite local edits.
   const claudeMd = path.join(config.workspace, 'CLAUDE.md');
-  if (config.backend === 'claude' && !fs.existsSync(claudeMd)) {
+  if (agentId(config) === 'claude-code' && !fs.existsSync(claudeMd)) {
     fs.copyFileSync(path.join(root, 'workspace/CLAUDE.example.md'), claudeMd);
     console.log(`Created ${claudeMd} from CLAUDE.example.md`);
   }
@@ -142,7 +143,7 @@ const systemd = hasSystemd();
 if (command === '__supervise') {
   supervise();
 } else if (command === 'install') {
-  preflight();
+  await preflight();
   if (systemd) {
     writeUnit();
     systemctl('enable', '--now', unitName);
@@ -153,13 +154,13 @@ if (command === '__supervise') {
   }
 } else if (command === 'start') {
   if (systemd) { systemctl('start', unitName); console.log('Started.'); }
-  else { preflight(); await startSupervisor(); }
+  else { await preflight(); await startSupervisor(); }
 } else if (command === 'stop') {
   if (systemd) { systemctl('stop', unitName); console.log('Stopped.'); }
   else await stopSupervisor();
 } else if (command === 'restart') {
   if (systemd) { systemctl('restart', unitName); console.log('Restarted.'); }
-  else { await stopSupervisor(); preflight(); await startSupervisor(); }
+  else { await stopSupervisor(); await preflight(); await startSupervisor(); }
 } else if (command === 'status') {
   if (systemd) {
     try { console.log(systemctl('status', '--no-pager', unitName)); } catch (error) { console.log(error.stdout || error.message); }

@@ -1,5 +1,6 @@
 {
-  "backend": "codex",
+  "agent": "codex",
+  "channel": "lark",
   "profile": "YOUR_LARK_PROFILE",
   "ownerOpenId": "ou_REPLACE_WITH_YOUR_USER_OPEN_ID",
   "botName": "Assistant",
