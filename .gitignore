@@ -1,6 +1,7 @@
 runtime/
 config.json
 workspace/CLAUDE.md
+workspace/attachments/
 .DS_Store
 node_modules/
 .env

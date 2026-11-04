@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { turnArgs, recapArgs, usageArgs, recapPrompt, turnInput, parseEvent, permissionModes, permissionMode,
-  findPermissionMode } from '../claude-code-agent/cli.mjs';
+  findPermissionMode, compactArgs, compactInput, parseCompactEvent, renameArgs, renameInput, parseRenameEvent } from '../claude-code-agent/cli.mjs';
 
 const config = { agent: 'claude-code', claudeBin: '/bin/claude', workspace: '/workspace' };
 const modeOf = args => args[args.indexOf('--permission-mode') + 1];
@@ -78,4 +78,33 @@ test('mode names are matched case-insensitively with a short alias for bypassPer
   assert.equal(findPermissionMode('bypass'), 'bypassPermissions');
   assert.equal(findPermissionMode('default'), null);
   assert.equal(findPermissionMode(''), null);
+});
+test('API errors carry their reason, with usage-limit guidance', () => {
+  const limit = parseEvent({ type: 'assistant', error: 'rate_limit', message: { content: [{ type: 'text', text: "You've hit your 5-hour limit · resets 5am (UTC)" }] } });
+  assert.match(limit.errorText, /^Claude 订阅额度已用完（You've hit your 5-hour limit · resets 5am \(UTC\)）。.*\/usage/);
+  assert.equal(parseEvent({ type: 'assistant', error: 'server_error', message: { content: [{ type: 'text', text: 'Overloaded' }] } }).errorText, 'Overloaded');
+  assert.equal(parseEvent({ type: 'result', subtype: 'success', is_error: true, result: 'Prompt is too long' }).errorText, 'Prompt is too long');
+  assert.equal(parseEvent({ type: 'result', subtype: 'success', result: 'fine' }).errorText, undefined);
+  assert.equal(parseEvent({ type: 'assistant', message: { content: [] } }).errorText, undefined);
+});
+test('/compact resumes the exact session and reports the token counts from the compact boundary', () => {
+  assert.deepEqual(compactArgs('s1').slice(-2), ['--resume', 's1']);
+  assert(compactArgs('s1').includes('--permission-prompts'));
+  assert.equal(compactInput(''), '/compact');
+  assert.equal(compactInput('保留决定'), '/compact 保留决定');
+  assert.equal(parseCompactEvent({ type: 'system', subtype: 'compact_boundary', compact_metadata: { pre_tokens: 22102, post_tokens: 7304 } }).text,
+    '已压缩会话上下文：约 22,102 → 7,304 tokens。之后的消息会基于压缩后的摘要继续，会话 ID 不变。');
+  const done = parseCompactEvent({ type: 'result', subtype: 'success', is_error: false, result: '', session_id: 's1' });
+  assert.equal(done.completed, true);
+  assert.equal(done.text, undefined);
+});
+test('/rename resumes the exact session and resolves to the name Claude Code reports', () => {
+  assert.deepEqual(renameArgs('s1').slice(-2), ['--resume', 's1']);
+  assert.equal(renameInput(''), '/rename');
+  assert.equal(renameInput('新名字'), '/rename 新名字');
+  const done = { type: 'result', subtype: 'success', is_error: false, result: 'Session renamed to: 新名字', local_command: 'rename' };
+  assert.equal(parseRenameEvent(done, '新名字').text, '新名字');
+  assert.equal(parseRenameEvent({ ...done, result: 'Session renamed to: auto-generated' }, '').text, 'auto-generated');
+  assert.equal(parseRenameEvent({ ...done, result: 'Renamed.' }, '想要的名字').text, '想要的名字');
+  assert.equal(parseRenameEvent({ ...done, is_error: true, result: 'failed' }, 'x').text, undefined);
 });

@@ -12,6 +12,9 @@ test('extract image resources from rich text, raw image and multilingual post, p
   assert.deepEqual(imageKeys({ zh_cn: { content: [[{ tag: 'img', image_key: 'img_two' }]] } }), ['img_two']);
   assert.deepEqual(imageKeys('文字中的 img_no 不应该下载；![Image](https://example.com/evil.png)'), []);
   assert.deepEqual(imageKeys('![Image](img_../../escape)'), []);
+  assert.deepEqual(imageKeys('[Image: img_v3_new]'), ['img_v3_new']);
+  assert.deepEqual(imageKeys('看看这个\n[Image: img_v3_a]\n还有 [image:img_v3_b] 和 ![Image](img_v3_a)'), ['img_v3_a', 'img_v3_b']);
+  assert.deepEqual(imageKeys('[Image: https://example.com/x.png] [Image: img_../../escape]'), []);
 });
 test('inspect actual image bytes instead of trusting downloaded filename', () => {
   assert.equal(imageMediaType(jpeg), 'image/jpeg');
@@ -26,15 +29,20 @@ test('download exact message resources into private workspace files and pass byt
   const config = { backend: 'claude', workspace: path.join(root, 'workspace') };
   const event = { message_id: 'om_one', message_type: 'post', content: '![Image](img_one)\n请看图' };
   const calls = [];
+  let stagingDir;
   const runLark = async (args, timeout, cwd) => {
     calls.push(args);
-    assert.equal(cwd, config.workspace);
+    // lark-cli refuses to write under /root, so downloads go to a private temp directory first.
+    stagingDir = cwd;
+    assert(cwd.startsWith(fs.realpathSync(os.tmpdir()) + path.sep) && !cwd.startsWith(config.workspace));
+    assert.equal(fs.statSync(cwd).mode & 0o777, 0o700);
     assert.equal(args[args.indexOf('--message-id') + 1], 'om_one');
     assert.equal(args[args.indexOf('--file-key') + 1], 'img_one');
-    const output = args[args.indexOf('--output') + 1] + '.jpg';
-    assert(!output.startsWith('..'));
-    fs.writeFileSync(path.resolve(cwd, output), jpeg);
-    return { saved_path: output, size_bytes: jpeg.length };
+    assert.equal(args[args.indexOf('--output') + 1], 'image-1');
+    // Recent lark-cli versions report an absolute saved_path.
+    const saved = path.join(cwd, 'image-1.jpg');
+    fs.writeFileSync(saved, jpeg);
+    return { saved_path: saved, size_bytes: jpeg.length };
   };
   const images = await prepareImages(event, config, runLark, root);
   assert.equal(calls.length, 1);
@@ -43,8 +51,10 @@ test('download exact message resources into private workspace files and pass byt
   assert.equal(images[0].mediaType, 'image/jpeg');
   assert.equal(fs.statSync(images[0].path).mode & 0o777, 0o600);
   assert.equal(fs.statSync(path.dirname(images[0].path)).mode & 0o777, 0o700);
+  assert(images[0].path.startsWith(path.join(config.workspace, 'attachments') + path.sep) && images[0].path.endsWith('image-1.jpg'));
+  assert.deepEqual(fs.readFileSync(images[0].path), jpeg);
+  assert(!fs.existsSync(stagingDir), 'staging directory is removed');
   assert.deepEqual(await prepareImages({ ...event, message_type: 'file' }, config, runLark, root), []);
-  assert.deepEqual(await prepareImages(event, { ...config, backend: 'codex' }, runLark, root), []);
 });
 test('resolve omitted event image keys from the same message; missing keys are explicit failures', async t => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lark-images-')));

@@ -92,7 +92,7 @@ runTurn: ({ sessionId, cwd, text, timeoutMs, onSession }) => runCliTurn({
 }),
 ```
 
-`parse` 返回的字段：`ready` 表示已启动（2 分钟内未出现则按启动失败处理）；`sessionId` 会转给 `onSession`；`completed` / `failed` 表示本轮成功或失败；`text` 为最终答案（多次出现取最后一次）。退出码非 0、未出现 `completed` 或答案为空都按失败处理。进程放在独立进程组里，取消或超时会整组终止；stderr 被丢弃，避免把模型输出或凭证写进日志。`runCliQuery({ bin, args, input, cwd, env, parse })` 用于只取一次结果的查询（如 `/usage`）。
+`parse` 返回的字段：`ready` 表示已启动（2 分钟内未出现则按启动失败处理）；`sessionId` 会转给 `onSession`；`completed` / `failed` 表示本轮成功或失败；`text` 为最终答案（多次出现取最后一次）；`errorText` 为面向用户的失败原因（取第一次出现的），失败时拼进错误提示，例如“Foo 本轮没有完成：<原因>”。退出码非 0、未出现 `completed` 或答案为空都按失败处理。进程放在独立进程组里，取消或超时会整组终止；stderr 被丢弃，避免把模型输出或凭证写进日志。`runCliQuery({ bin, args, input, cwd, env, parse })` 用于只取一次结果的查询（如 `/usage`）。
 
 ### 可选功能
 
@@ -109,6 +109,10 @@ runTurn: ({ sessionId, cwd, text, timeoutMs, onSession }) => runCliTurn({
 | `hint` | 可选，附在“发送 /mode 模式名 切换”后的简短说明。 |
 
 **`usage()` 和 `usageLabel`** → `/usage`：`usage()` 返回 `Promise<string>`（直接发给用户的文字），`usageLabel` 是 `/help` 里的说明。失败时中枢回复通用提示。
+
+**`rename({ sessionId, cwd, name, timeoutMs })`** → `/rename [名称]`：给这个会话改名，返回 `{ cancel, result }`，`result` 解析为改名后的名称（`name` 为空字符串时由 Agent 自动生成）。中枢只在聊天已有会话时调用；成功后用新名称更新进入会话的回复标题，workspace 会话的名称显示在 `/status`。会话 ID 应保持不变，不要调用 `onSession`。
+
+**`compact({ sessionId, cwd, instructions, timeoutMs })`** → `/compact [要点]`：压缩这个会话的上下文，返回与 `runTurn` 相同的 `{ cancel, result }`，`result` 解析为发给用户的结果说明（如压缩前后的 token 数）。`instructions` 是用户附的要点，可能为空字符串。中枢只在聊天已有会话时调用，按排队顺序执行；会话 ID 应保持不变，不要调用 `onSession`。
 
 **`sessions`** → `/sessions`、`/switch`、`/exit`（只在私聊可用）。会话对象：
 
@@ -191,7 +195,7 @@ export function createChannel(config, context) {
 ### 其他方法
 
 - `acknowledge(message)`：表示“已开始处理”，例如加表情或已读回执；返回 Promise 且**不得拒绝**（失败自己记日志）。没有对应能力就返回 `Promise.resolve()`。
-- `attachments(message)`：仅当 Agent 支持图片且 `kind` 为 `'image'` 或 `'rich'` 时调用，返回 `[{ path, mediaType, data }]`（没有图返回 `[]`）。文件建议存在 `config.workspace` 下的私有目录；遇到不支持的格式或超限时抛出带用户可读 `message` 的错误，中枢会原样回复。
+- `attachments(message)`：仅当 Agent 支持图片且 `kind` 为 `'image'` 或 `'rich'` 时调用，返回 `[{ path, mediaType, data }]`（没有图返回 `[]`）。文件建议存在 `config.workspace` 下的私有目录（平台工具不允许写入该目录时，先下载到 `os.tmpdir()` 下用 `mkdtemp` 建的私有目录，检查后再复制，参考 `lark-channel/images.mjs`）；遇到不支持的格式或超限时抛出带用户可读 `message` 的错误，中枢会原样回复。
 
 ## 测试
 

@@ -1,9 +1,10 @@
 // Agent adapter: local Claude Code CLI. Implements the agent interface in core/README.md, plus the
-// optional features modes (/mode), usage (/usage) and sessions (/sessions, /switch, /exit).
+// optional features modes (/mode), usage (/usage), compact (/compact), rename (/rename) and sessions
+// (/sessions, /switch, /exit).
 import path from 'node:path';
 import { runCliTurn, runCliQuery } from '../core/cli-turn.mjs';
 import { permissionModes, permissionMode, findPermissionMode, turnArgs, recapArgs, usageArgs, recapPrompt, turnInput,
-  parseEvent } from './cli.mjs';
+  parseEvent, compactArgs, compactInput, parseCompactEvent, renameArgs, renameInput, parseRenameEvent } from './cli.mjs';
 import { claudeHome, listSessions, filterSessions, pickSession, runningSessions, sessionDigest, formatSessionList,
   timeAgo } from './sessions.mjs';
 
@@ -29,6 +30,11 @@ export function createAgent(config, { env }) {
     },
     usage: () => runCliQuery({ bin: config.claudeBin, args: usageArgs(), input: '/usage', cwd: config.workspace, env, parse: parseEvent }),
     usageLabel: '查看 Claude 订阅用量和重置时间',
+    // Resolves to the session's new name.
+    rename: ({ sessionId, cwd, name, timeoutMs }) => runCliTurn({ bin: config.claudeBin, args: renameArgs(sessionId),
+      input: renameInput(name), cwd, env, parse: event => parseRenameEvent(event, name), timeoutMs, agentName: displayName }),
+    compact: ({ sessionId, cwd, instructions, timeoutMs }) => runCliTurn({ bin: config.claudeBin, args: compactArgs(sessionId),
+      input: compactInput(instructions), cwd, env, parse: parseCompactEvent, timeoutMs, agentName: displayName }),
     sessions: {
       list: ({ exclude }) => listSessions({ home, exclude }),
       filter: filterSessions,

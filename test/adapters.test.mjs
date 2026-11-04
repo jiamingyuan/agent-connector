@@ -30,6 +30,8 @@ test('agents expose identity, capabilities and runTurn; optional features are co
     if (agent.modes) for (const key of ['descriptions', 'resolve', 'find']) assert(agent.modes[key], key);
     if (agent.sessions) for (const key of ['list', 'filter', 'pick', 'running', 'digest', 'format', 'ago', 'resumeHint', 'recap']) assert.equal(typeof agent.sessions[key], 'function', key);
     if (agent.usage) assert.equal(typeof agent.usageLabel, 'string');
+    if (agent.compact) assert.equal(typeof agent.compact, 'function');
+    if (agent.rename) assert.equal(typeof agent.rename, 'function');
   }
   assert.deepEqual(codexEvent({ type: 'thread.started', thread_id: 'c1' }), { ready: true, sessionId: 'c1' });
   assert.deepEqual(codexEvent({ type: 'turn.completed' }), { completed: true });

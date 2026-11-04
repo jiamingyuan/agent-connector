@@ -52,6 +52,14 @@ if(args.includes('consume')){
 }else{
  if(args.includes('+messages-reply')){const flag=args.includes('--markdown')?'--markdown':'--text';
   fs.appendFileSync(path.join(root,'replies.jsonl'),JSON.stringify({id:args[args.indexOf('--message-id')+1],format:flag.slice(2),text:args[args.indexOf(flag)+1]})+'\\n');}
+ if(args.includes('+messages-resources-download')){
+  // Like lark-cli 1.0.98: relative --output under the working directory, absolute saved_path, refuses /root.
+  if(process.cwd().startsWith('/root'))return console.log(JSON.stringify({ok:false,error:{type:'validation',subtype:'invalid_argument',message:'protected by the built-in denylist'}}));
+  const saved=path.join(process.cwd(),args[args.indexOf('--output')+1]+'.png');
+  fs.writeFileSync(saved,Buffer.from([137,80,78,71,13,10,26,10,0,0,0,0]));
+  fs.appendFileSync(path.join(root,'downloads.jsonl'),JSON.stringify({key:args[args.indexOf('--file-key')+1],cwd:process.cwd()})+'\\n');
+  return console.log(JSON.stringify({ok:true,data:{saved_path:saved,size_bytes:12}}));
+ }
  console.log(JSON.stringify({ok:true,data:{}}));
 }
 `, { mode: 0o700 });
@@ -63,8 +71,31 @@ process.stdin.on('data',x=>input+=x);process.stdin.on('end',()=>{
  const index=args.indexOf('--resume'),resumed=index<0?null:args[index+1],summary=args.includes('--fork-session');
  const mode=args.includes('--permission-mode')?args[args.indexOf('--permission-mode')+1]:null;
  if(!args.includes('--permission-mode')&&!summary&&input==='/usage'){fs.appendFileSync(path.join(root,'usage.jsonl'),JSON.stringify({args,cwd:process.cwd()})+'\\n');console.log(JSON.stringify({type:'result',subtype:'success',session_id:'u',result:'Current session: 14% used'}));return;}
+ if(input.startsWith('/rename')){
+  // Like Claude Code: '/rename <name>' sets it, a bare '/rename' generates one.
+  const name=input.slice('/rename'.length).trim()||'auto-name';
+  fs.appendFileSync(path.join(root,'renames.jsonl'),JSON.stringify({args,resumed,input,cwd:process.cwd()})+'\\n');
+  console.log(JSON.stringify({type:'system',subtype:'init',session_id:resumed}));
+  console.log(JSON.stringify({type:'system',subtype:'session_title_changed',session_id:resumed}));
+  console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,session_id:resumed,result:'Session renamed to: '+name,local_command:'rename'}));return;
+ }
+ if(input.startsWith('/compact')){
+  fs.appendFileSync(path.join(root,'compacts.jsonl'),JSON.stringify({args,resumed,input,cwd:process.cwd()})+'\\n');
+  console.log(JSON.stringify({type:'system',subtype:'init',session_id:resumed}));
+  console.log(JSON.stringify({type:'system',subtype:'compact_boundary',session_id:resumed,compact_metadata:{trigger:'manual',pre_tokens:22102,post_tokens:7304}}));
+  console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,session_id:resumed,result:''}));return;
+ }
  const session=summary?'fork-'+process.pid:(resumed||'new-'+process.pid);
- fs.appendFileSync(path.join(root,'calls.jsonl'),JSON.stringify({args,resumed,summary,mode,cwd:process.cwd(),input})+'\\n');
+ // With --input-format stream-json the input is one user message whose content carries the images.
+ let images=0,text=input;
+ if(args.includes('--input-format')){const m=JSON.parse(input).message;images=m.content.filter(b=>b.type==='image').length;text=m.content.find(b=>b.type==='text').text;}
+ fs.appendFileSync(path.join(root,'calls.jsonl'),JSON.stringify({args,resumed,summary,mode,cwd:process.cwd(),input:text,images})+'\\n');
+ if(text.startsWith('LIMIT-ME')){
+  console.log(JSON.stringify({type:'system',subtype:'init',session_id:session}));
+  console.log(JSON.stringify({type:'assistant',error:'rate_limit',session_id:session,message:{role:'assistant',content:[{type:'text',text:"You've hit your 5-hour limit · resets 5am (UTC)"}]}}));
+  console.log(JSON.stringify({type:'result',subtype:'success',is_error:true,session_id:session,result:"You've hit your 5-hour limit · resets 5am (UTC)"}));
+  process.exit(1);
+ }
  if(summary&&failSummary.some(prefix=>resumed.startsWith(prefix)))process.exit(1);
  console.log(JSON.stringify({type:'system',subtype:'init',session_id:session}));
  console.log(JSON.stringify({type:'result',subtype:'success',session_id:session,result:summary?'- 目标：重构 alpha':'answer in '+path.basename(process.cwd())}));

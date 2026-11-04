@@ -7,6 +7,8 @@ import { replyParts, replyKey, safeLabel } from './text.mjs';
 
 const LIST_LIMIT = 10;
 const SUMMARY_TIMEOUT_MS = 5 * 60_000;
+const COMPACT_TIMEOUT_MS = 10 * 60_000;
+const RENAME_TIMEOUT_MS = 2 * 60_000;
 
 export function commandArgs(text, name) {
   if (text === name) return '';
@@ -114,7 +116,11 @@ export function createHub({ config, agent, channel, runtime, log }) {
       if (!current || (current.id !== target.id && current.id !== id)) return;
       if (current.id !== id && current.file) current.file = sessions.fileFor?.(current.file, id) ?? current.file;
       Object.assign(current, { id, updatedAt });
-    } else state.sessions[chatId] = { id, updatedAt };
+    } else {
+      // A /rename name belongs to that session only.
+      const previous = state.sessions[chatId];
+      state.sessions[chatId] = { id, updatedAt, ...(previous?.id === id && previous.name ? { name: previous.name } : {}) };
+    }
     save();
   }
   // Bridge notes appended to the user's text; Claude session listings strip everything from "\n\n[桥接".
@@ -148,6 +154,56 @@ export function createHub({ config, agent, channel, runtime, log }) {
     return track(message, agent.runTurn({ sessionId: target.id, cwd: target.cwd, text: composeText(message, target), images,
       mode: state.modes[message.chatId], timeoutMs: config.turnTimeoutMs, turnKey: replyKey(message.id, 'output'),
       onSession: id => rememberSession(message.chatId, target, id) }), 'agent');
+  }
+
+  // ---- /compact ----
+  // Compacts the session this chat would continue next (workspace or the one chosen with /switch).
+  async function compactSession(message, instructions, generation) {
+    if (!agent.compact) return reply(message, `上下文压缩目前不支持 ${agentName}。`, 'compact');
+    const target = chatTarget(message.chatId);
+    if (!target.id) return reply(message, '当前会话还没有上下文，不需要压缩。', 'compact');
+    const problem = target.kind === 'attached' && attachedProblem(target);
+    if (problem) return reply(message, problem, 'blocked');
+    try {
+      await channel.acknowledge(message);
+      if (superseded(message, generation)) return;
+      const result = await track(message, agent.compact({ sessionId: target.id, cwd: target.cwd, instructions,
+        timeoutMs: Math.min(config.turnTimeoutMs, COMPACT_TIMEOUT_MS) }), 'compact');
+      if (result !== null && !stopping) await reply(message, result, 'compact');
+    } catch (error) {
+      log('compact_error', { messageId: message.id, type: error.code || error.name });
+      if (!stopping) await reply(message, error.message, 'error').catch(() => {});
+    }
+  }
+
+  // ---- /rename ----
+  // Renames the session this chat would continue next, through the agent's own rename.
+  async function renameSession(message, requested, generation) {
+    if (!agent.rename) return reply(message, `会话重命名目前不支持 ${agentName}。`, 'rename');
+    const target = chatTarget(message.chatId);
+    if (!target.id) return reply(message, '当前会话还没有上下文，先发一条消息再重命名。', 'rename');
+    const problem = target.kind === 'attached' && attachedProblem(target);
+    if (problem) return reply(message, problem, 'blocked');
+    const name = requested.replace(/\s+/g, ' ').trim().slice(0, 80);
+    try {
+      await channel.acknowledge(message);
+      if (superseded(message, generation)) return;
+      const renamed = await track(message, agent.rename({ sessionId: target.id, cwd: target.cwd, name,
+        timeoutMs: Math.min(config.turnTimeoutMs, RENAME_TIMEOUT_MS) }), 'rename');
+      if (renamed === null || stopping) return;
+      const label = safeLabel(renamed) || safeLabel(name);
+      // Update the stored name first so this reply already carries the new header.
+      const attached = state.attached[message.chatId];
+      if (target.kind === 'attached' && attached?.id === target.id) attached.name = label;
+      else if (target.kind === 'workspace' && state.sessions[message.chatId]?.id === target.id) state.sessions[message.chatId].name = label;
+      save();
+      log('session_renamed', { chatId: message.chatId, messageId: message.id });
+      return reply(message, `已将${target.kind === 'workspace' ? ' workspace ' : ''}会话重命名为「${label}」${name ? '' : '（根据对话内容自动生成）'}。`
+        + (target.kind === 'workspace' ? '/status 里会显示这个名字。' : '/sessions 列表和终端的会话列表里也会显示新名字。'), 'rename');
+    } catch (error) {
+      log('rename_error', { messageId: message.id, type: error.code || error.name });
+      if (!stopping) await reply(message, error.message, 'error').catch(() => {});
+    }
   }
 
   // ---- /usage ----
@@ -279,6 +335,8 @@ export function createHub({ config, agent, channel, runtime, log }) {
       + (config.allowGroupMentions ? `\n群聊请 @${config.botName} 后发送请求或以下命令；只接受已授权用户，每个群使用独立上下文。` : ''),
     `/new：新会话${sessions ? '（会先退出已选择的会话）' : ''}`, '/status：查看状态', '/stop：停止当前任务并清空排队消息'];
     if (modes) lines.push(`/mode：查看或切换权限模式（${Object.keys(modes.descriptions).join('、')}）`);
+    if (agent.rename) lines.push('/rename [名称]：重命名当前会话；不写名称时根据对话内容自动生成');
+    if (agent.compact) lines.push('/compact [要点]：压缩当前会话的上下文，可附上摘要里要保留的重点');
     if (agent.usage) lines.push(`/usage：${agent.usageLabel}`);
     if (sessions) lines.push(`/sessions：列出本机可切换的 ${agentName} 会话（仅私聊；/sessions all 包括脚本会话，/sessions 关键词 筛选）`,
       '/switch 编号：进入列表中的会话，并收到前情梗概', '/exit：退出当前会话，回到 workspace 会话');
@@ -293,7 +351,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
       ...(modes ? [`权限模式：${modeLabel(message.chatId)}`] : []),
       ...(attached
         ? [`当前会话：${attached.name}（/exit 回到 workspace）`, `会话 ID：${attached.id}`, `会话目录：${attached.cwd}`, `workspace 会话：${workspaceSession}`]
-        : ['当前会话：workspace', `会话：${workspaceSession}`]),
+        : [`当前会话：workspace${state.sessions[message.chatId]?.name ? `（${state.sessions[message.chatId].name}）` : ''}`, `会话：${workspaceSession}`]),
       `工作区：${config.workspace}`].join('\n');
   }
 
@@ -307,6 +365,10 @@ export function createHub({ config, agent, channel, runtime, log }) {
       return reply(message, `${left ? `已退出会话「${left}」。` : ''}已开启新会话，下一条消息会创建新的 ${agentName} 上下文。`, 'new');
     }
     if (text === '/exit') return exitSession(message);
+    const renameQuery = commandArgs(text, '/rename');
+    if (renameQuery !== null) return renameSession(message, renameQuery, generation);
+    const compactQuery = commandArgs(text, '/compact');
+    if (compactQuery !== null) return compactSession(message, compactQuery, generation);
     const modeQuery = commandArgs(text, '/mode');
     if (modeQuery !== null) return changeMode(message, modeQuery);
     const switchQuery = commandArgs(text, '/switch');

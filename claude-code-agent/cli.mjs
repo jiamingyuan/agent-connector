@@ -62,14 +62,60 @@ export function turnInput(text, images = []) {
   return JSON.stringify({ type: 'user', message: { role: 'user', content } }) + '\n';
 }
 
+const textOf = message => (Array.isArray(message?.content) ? message.content : [])
+  .filter(block => block?.type === 'text').map(block => block.text).join(' ').trim();
+// Claude Code reports API failures (usage limit, overload, auth) as an assistant message with
+// `error` set and the reason as its text; turn that into a user-facing reason.
+function errorReason(kind, text) {
+  const reason = String(text || kind || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+  if (kind === 'rate_limit') return `Claude 订阅额度已用完（${reason}）。额度恢复后重发即可，发 /usage 可查看重置时间`;
+  return reason;
+}
+
 export function parseEvent(event) {
   if (event.type === 'system' && event.subtype === 'init') {
     return { ready: true, sessionId: event.session_id, model: event.model };
   }
+  if (event.type === 'assistant' && typeof event.error === 'string') {
+    return { errorText: errorReason(event.error, textOf(event.message)) };
+  }
   if (event.type === 'result') {
     const completed = event.subtype === 'success' && event.is_error !== true;
     return { completed, failed: !completed, sessionId: event.session_id,
-      text: completed && typeof event.result === 'string' ? event.result : undefined };
+      text: completed && typeof event.result === 'string' ? event.result : undefined,
+      ...(!completed && typeof event.result === 'string' && event.result.trim() ? { errorText: errorReason(null, event.result) } : {}) };
   }
   return {};
+}
+
+// /rename runs Claude Code's own rename on the resumed session (title shown by /resume and /sessions).
+// Without a name Claude Code generates one from the conversation. The result is the final name.
+export function renameArgs(sessionId) {
+  return ['-p', '--output-format', 'stream-json', '--verbose', '--permission-prompts', 'none', '--resume', sessionId];
+}
+export const renameInput = name => (name ? `/rename ${name}` : '/rename');
+export function parseRenameEvent(event, requested = '') {
+  const update = parseEvent(event);
+  if (event.type === 'result' && update.completed) {
+    const renamed = /Session renamed to:\s*(.+)$/s.exec(String(event.result || '').trim())?.[1]?.trim();
+    update.text = renamed || requested || String(event.result || '').trim();
+  }
+  return update;
+}
+
+// /compact runs Claude Code's own compaction on the resumed session; the session ID stays the same.
+export function compactArgs(sessionId) {
+  return ['-p', '--output-format', 'stream-json', '--verbose', '--permission-prompts', 'none', '--resume', sessionId];
+}
+export const compactInput = instructions => (instructions ? `/compact ${instructions}` : '/compact');
+const tokens = value => (Number.isFinite(value) ? value.toLocaleString('en-US') : '?');
+// A successful /compact ends with an empty result, so the answer comes from the compact_boundary event.
+export function parseCompactEvent(event) {
+  if (event.type === 'system' && event.subtype === 'compact_boundary') {
+    const { pre_tokens: before, post_tokens: after } = event.compact_metadata || {};
+    return { text: `已压缩会话上下文：约 ${tokens(before)} → ${tokens(after)} tokens。之后的消息会基于压缩后的摘要继续，会话 ID 不变。` };
+  }
+  const update = parseEvent(event);
+  delete update.text;
+  return update;
 }

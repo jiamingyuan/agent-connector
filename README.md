@@ -17,12 +17,16 @@
 | `/stop` | 停止当前任务，并清空这个聊天里排队的消息；已执行的操作不会撤销，会话上下文保留 | 立即 | 全部 |
 | `/new` | 开启新的 workspace 会话；如果在其他会话里，先退出 | 排队 | 全部 |
 | `/mode [模式名]` | 不带参数时查看当前权限模式和全部选项，带参数时切换（见[权限模式](#权限模式)） | 排队 | Claude Code |
+| `/rename [名称]` | 重命名当前会话（workspace 会话或 `/switch` 进入的会话）；不写名称时根据对话内容自动生成。进入的会话改名后，回复首行的会话名、`/sessions` 列表和终端的会话列表都会用新名字；workspace 会话的名字显示在 `/status`。调用 Claude Code 自带的 `/rename` | 排队 | Claude Code |
+| `/compact [要点]` | 压缩当前会话的上下文（workspace 会话或 `/switch` 进入的会话），回复压缩前后的 token 数；会话 ID 不变，之后的消息基于压缩后的摘要继续。可附上摘要里要保留的重点，如 `/compact 保留 newdash 的设计决定`。调用 Claude Code 自带的 `/compact` | 排队 | Claude Code |
 | `/usage` | 查询 Claude 订阅用量：当前会话窗口和本周的用量百分比与重置时间。调用本机 Claude Code 自带的 `/usage`，不消耗模型调用，也不保存会话 | 立即 | Claude Code |
 | `/sessions [all \| 关键词]` | 列出本机可切换的会话（见[切换会话](#切换会话)） | 立即 | Claude Code，仅私聊 |
 | `/switch 编号` | 进入列表中的会话，先收到前情梗概；也可写会话 ID 开头几位或完整会话名 | 排队 | Claude Code，仅私聊 |
 | `/exit` | 退出当前会话，回到 workspace 会话 | 排队 | Claude Code，仅私聊 |
 
 - **立即**：马上回复，不等正在运行的任务。**排队**：和普通消息按发送顺序执行，排在它前面的消息不受影响。
+- `/compact` 用于会话变长或切换话题前主动压缩，也可以指定摘要里要保留的重点。
+- Claude 返回错误时（例如订阅额度用完），回复里会给出原因；额度用完时会提示用 `/usage` 查看重置时间。
 - 不以这些指令开头的文字、图片都会交给 Agent。一条消息不超过 40,000 字；同时排队超过 20 条时会请你稍后再发。
 - 当前 Agent 不支持的指令（例如 Codex 下的 `/mode`）会回复说明，不会转给 Agent。
 
@@ -65,8 +69,8 @@ lark-channel/     ◀──回复──  core/     ◀──最终回答──  
 | --- | --- |
 | `bridge.mjs` | 入口：读 `config.json`，按 `channel` 和 `agent` 从 `core/registry.mjs` 加载模块，清理子进程环境变量，取得进程锁，启动中枢。 |
 | `core/` | 中枢 `hub.mjs`：按聊天排队、去重、回复发件箱与重试、聊天状态，以及上面全部指令。`cli-turn.mjs` 是命令行类 Agent 共用的进程运行器，`text.mjs` 负责回复拆分和会话名标题。不含任何渠道或 Agent 的细节。 |
-| `lark-channel/` | 飞书：`lark-cli` 长连接收 `im.message.receive_v1`、过滤非 owner 和过期消息、去掉 @机器人、发回复、加表情、下载图片。 |
-| `claude-code-agent/` | Claude Code：运行对话、权限模式、`/usage`、本机会话列表与前情梗概。 |
+| `lark-channel/` | 飞书：`lark-cli` 长连接收 `im.message.receive_v1`、过滤非 owner 和过期消息、去掉 @机器人、发回复、加表情、下载图片。`lark-cli` 1.0.98 起拒绝把下载写到 `/root` 下，图片先下载到系统临时目录中的私有目录（700），检查格式和大小后复制到工作区 `attachments/`，再删除临时目录。 |
+| `claude-code-agent/` | Claude Code：运行对话、权限模式、`/rename`、`/compact`、`/usage`、本机会话列表与前情梗概。 |
 | `codex-agent/` | Codex：运行对话（仅文字），也是基于 `core/cli-turn.mjs` 的最小命令行 Agent 示例。 |
 | `example-agent/` | 模板：不依赖外部程序的回声 Agent，复制改名即可开始接入；也可配置 `"agent": "example"` 不花模型额度地测试渠道。 |
 
@@ -96,6 +100,8 @@ lark-channel/     ◀──回复──  core/     ◀──最终回答──  
   runTurn({ sessionId, cwd, text, images, mode, timeoutMs, turnKey, onSession }),  // → { cancel(), result }
   modes,               // 可选，启用 /mode
   usage, usageLabel,   // 可选，启用 /usage
+  compact,             // 可选，启用 /compact
+  rename,              // 可选，启用 /rename
   sessions,            // 可选，启用 /sessions、/switch、/exit
 }
 ```
@@ -132,7 +138,7 @@ cp config.example.json config.json          # 或 Codex
 | `ownerOpenId` | 唯一允许向机器人发出请求的用户 open ID。 |
 | `botName` | 机器人展示名称，用于回复和说明。 |
 | `larkBin` / `claudeBin` / `codexBin` | 对应可执行文件路径，只需填写所选模块用到的。 |
-| `workspace` | Agent 的工作区绝对路径；下载的图片也保存在这里。 |
+| `workspace` | Agent 的工作区绝对路径；收到的图片保存在其中的 `attachments/`。 |
 | `maxEventAgeMs` | 接受消息的最大年龄，单位毫秒。 |
 | `turnTimeoutMs` | 单条任务的最长运行时间，单位毫秒；前情梗概最多 5 分钟。 |
 | `allowGroupMentions` / `botOpenId` | 群聊默认关闭；开启时须提供本机器人正确的 open ID，并在飞书启用相应事件权限。 |
@@ -173,7 +179,7 @@ node service.mjs stop | start | uninstall
 npm test
 ```
 
-使用 Node.js 内置测试框架和模拟 CLI，不依赖真实飞书消息。覆盖消息过滤、会话隔离、超时和取消、回复拆分、图片处理、各 Agent 协议、指令（切换会话、权限模式、`/usage`），以及所有已登记模块是否满足接口。
+使用 Node.js 内置测试框架和模拟 CLI，不依赖真实飞书消息。覆盖消息过滤、会话隔离、超时和取消、回复拆分、图片处理、各 Agent 协议、指令（切换会话、权限模式、`/rename`、`/compact`、`/usage`）、新版 `lark-cli` 的图片格式，以及所有已登记模块是否满足接口。
 
 ## 参考
 
