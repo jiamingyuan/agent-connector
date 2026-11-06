@@ -36,22 +36,25 @@ test('owner lists, enters and leaves local Claude Code sessions from a private c
   });
   const [list, busy, entered, answer, statusReply, exited, workspace, fallback, exitedAgain] = replies;
 
-  assert.equal(list.format, 'text');
+  assert.equal(list.head, '**workspace** -- auto mode');
   assert.match(list.text, /1\. alpha 项目 · .*proj · 1 分钟前\n2\. 终端长任务 · .* · 终端执行中/);
   assert(!list.text.includes('脚本任务') && !list.text.includes('飞书 workspace'));
   assert.match(busy.text, /正在终端里执行任务/);
 
   assert.equal(entered.format, 'markdown');
-  assert(entered.text.startsWith('**alpha 项目**\n已进入会话「alpha 项目」'), entered.text);
+  assert.equal(entered.head, '**alpha 项目** -- auto mode');
+  assert(entered.text.startsWith('已进入会话「alpha 项目」'), entered.text);
   assert(entered.text.includes('前情梗概：\n- 目标：重构 alpha'));
   assert(!entered.text.includes('终端里还开着'));
-  assert.deepEqual(answer, { id: 'om_step_3', format: 'markdown', text: '**alpha 项目**\nanswer in proj' });
-  assert(statusReply.text.startsWith('**alpha 项目**\n') && statusReply.text.includes('当前会话：alpha 项目') && statusReply.text.includes('workspace 会话：ws-session'));
-  assert.deepEqual(exited, { id: 'om_step_5', format: 'text', text: '已退出会话「alpha 项目」，回到 workspace 会话。' });
-  assert.deepEqual(workspace, { id: 'om_step_6', format: 'markdown', text: `answer in ${path.basename(root)}` });
-  assert(fallback.text.startsWith('**脚本任务**\n已进入会话「脚本任务」'), fallback.text);
+  assert.deepEqual([answer.head, answer.format, answer.text], ['**alpha 项目** -- auto mode', 'markdown', 'answer in proj']);
+  assert(statusReply.head === '**alpha 项目** -- auto mode' && statusReply.text.includes('当前会话：alpha 项目') && statusReply.text.includes('workspace 会话：ws-session'));
+  // After /exit the header already names the workspace session.
+  assert.deepEqual([exited.head, exited.text], ['**workspace** -- auto mode', '已退出会话「alpha 项目」，回到 workspace 会话。']);
+  assert.deepEqual([workspace.head, workspace.text], ['**workspace** -- auto mode', `answer in ${path.basename(root)}`]);
+  assert.equal(fallback.head, '**脚本任务** -- auto mode');
+  assert(fallback.text.startsWith('已进入会话「脚本任务」'), fallback.text);
   assert(fallback.text.includes('自动梗概生成失败') && fallback.text.includes('最近的提问：脚本任务') && fallback.text.includes('最近的回复：脚本完成'));
-  assert(!exitedAgain.text.startsWith('**'));
+  assert.equal(exitedAgain.head, '**workspace** -- auto mode');
 
   assert.equal(calls.length, 4);
   const [recap, attachedTurn, workspaceTurn, failedRecap] = calls;

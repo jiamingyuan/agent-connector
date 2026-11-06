@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { eventDecision, messageText, replyArgs } from '../lark-channel/protocol.mjs';
+import { eventDecision, messageText, replyArgs, allowedUsers } from '../lark-channel/protocol.mjs';
 
 const now = Date.now();
 const config = { ownerOpenId: 'ou_owner', maxEventAgeMs: 300_000, workspace: '/tmp/workspace' };
@@ -44,4 +44,14 @@ test('rich replies use native Markdown posts while old queued replies keep plain
   assert(!replyArgs({ ...entry, format: 'markdown' }).includes('--text'));
   assert(replyArgs(entry).includes('--text'));
   assert.deepEqual(replyArgs({ ...entry, format: 'markdown' }).slice(-2), ['--idempotency-key', 'stable']);
+});
+test('several users can be allowed; each is checked exactly and malformed IDs are ignored', () => {
+  const many = { ...config, ownerOpenId: undefined, ownerOpenIds: ['ou_alice', 'ou_bob', 'not-an-id', 42] };
+  assert.deepEqual(allowedUsers(many), ['ou_alice', 'ou_bob']);
+  assert.equal(eventDecision({ ...event, sender_id: 'ou_bob' }, many, now), null);
+  assert.equal(eventDecision({ ...event, sender_id: 'ou_carol' }, many, now), 'sender');
+  assert.equal(eventDecision({ ...event, sender_id: 'not-an-id' }, many, now), 'sender');
+  assert.deepEqual(allowedUsers({ ownerOpenId: 'ou_owner', ownerOpenIds: ['ou_owner', 'ou_bob'] }), ['ou_owner', 'ou_bob']);
+  assert.equal(eventDecision({ ...event, sender_id: 'ou_owner' }, { ...config, ownerOpenIds: undefined }, now), null);
+  assert.equal(eventDecision(event, { ...config, ownerOpenId: undefined }, now), 'sender');
 });

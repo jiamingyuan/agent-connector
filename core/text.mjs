@@ -51,10 +51,11 @@ export function splitMarkdown(text, targetBytes = 6000, hardMaxBytes = 12_000) {
   return parts;
 }
 
-// Inside a selected session every message starts with the session name on its own line:
-// bold for Markdown posts, bracketed for plain text. Each split part gets the header.
-export function replyParts(text, format, label) {
-  const header = !label ? '' : format === 'markdown' ? `**${label}**\n` : `【${label}】\n`;
+// Every message can start with a header line: the session name (bold for Markdown posts, bracketed
+// for plain text) and an optional note such as the permission mode. Each split part gets the header.
+export function replyParts(text, format, label, note = '') {
+  const tail = note ? ` -- ${note}` : '';
+  const header = !label ? '' : format === 'markdown' ? `**${label}**${tail}\n` : `【${label}】${tail}\n`;
   const room = Buffer.byteLength(header);
   const parts = format === 'markdown' ? splitMarkdown(text, 6000 - room, 12_000 - room) : splitText(text, 12_000 - room);
   return parts.map(part => header + part);

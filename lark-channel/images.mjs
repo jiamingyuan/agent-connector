@@ -56,7 +56,9 @@ export async function prepareImages(event, config, runLark) {
   }
   if (!keys.length) return [];
   if (keys.length > imageLimits.count) throw new Error('一条消息最多支持 4 张图片，请分批发送。');
-  const base = path.resolve(config.workspace, 'attachments');
+  // Real paths throughout: on macOS the workspace or the temp dir can sit behind a symlink (/var -> /private/var).
+  fs.mkdirSync(config.workspace, { recursive: true });
+  const base = path.join(fs.realpathSync(config.workspace), 'attachments');
   privateDirectory(base);
   const directory = path.join(base, replyKey(event.message_id, 'images'));
   privateDirectory(directory);
@@ -79,15 +81,16 @@ export async function prepareImages(event, config, runLark) {
       const staged = path.resolve(staging, downloaded?.saved_path || '');
       let real;
       try { real = fs.realpathSync(staged); } catch { real = null; }
-      if (real !== staged || !staged.startsWith(staging + path.sep) || !fs.lstatSync(staged).isFile()) {
+      // The file itself must not be a symlink, and must resolve inside the private staging dir.
+      if (!real?.startsWith(staging + path.sep) || !fs.lstatSync(staged).isFile()) {
         throw new Error('图片下载结果异常，本轮未发送给模型。');
       }
-      const size = fs.statSync(staged).size;
+      const size = fs.statSync(real).size;
       total += size;
       if (!size || size > imageLimits.bytes || total > imageLimits.totalBytes) {
         throw new Error('图片过大：每张最多 5 MiB，一条消息合计最多 6 MiB，请压缩或分批发送。');
       }
-      const bytes = fs.readFileSync(staged);
+      const bytes = fs.readFileSync(real);
       const mediaType = imageMediaType(bytes);
       const file = path.join(directory, `image-${index + 1}.${mediaType.split('/')[1].replace('jpeg', 'jpg')}`);
       fs.writeFileSync(file, bytes, { mode: 0o600 });

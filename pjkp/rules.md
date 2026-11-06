@@ -1,4 +1,4 @@
-# lark-agent-bridge 规则
+# agent-connector 规则
 
 暂无（2026-11-03）。
 

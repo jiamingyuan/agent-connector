@@ -87,11 +87,20 @@ export function createHub({ config, agent, channel, runtime, log }) {
   function flushLater() {
     sending = sending.catch(() => {}).then(flushOutbox).catch(error => log('outbox_error', { type: error.detail?.subtype || error.name }));
   }
+  // Header on every message: which session the chat is in and, for agents with permission modes,
+  // the mode in effect, so a high-risk mode such as bypassPermissions is always visible.
+  function header(chatId) {
+    const attached = state.attached[chatId];
+    let mode;
+    if (agent.modes) { try { mode = agent.modes.resolve(state.modes[chatId]); } catch { /* invalid config: no note */ } }
+    if (!attached && !mode) return {};
+    const label = attached?.name || state.sessions[chatId]?.name || 'workspace';
+    return { label, note: mode ? `${agent.modes.privateOnly?.includes(mode) ? '⚠️ ' : ''}${mode} mode` : '' };
+  }
   function reply(message, text, kind = 'answer') {
-    // While a session is selected, every message (answers and notices) is headed by its name.
-    const label = state.attached[message.chatId]?.name;
+    const { label, note } = header(message.chatId);
     const format = channel.richText && (kind === 'answer' || label) ? 'markdown' : 'text';
-    for (const [index, part] of replyParts(text, format, label).entries()) {
+    for (const [index, part] of replyParts(text, format, label, note).entries()) {
       const key = replyKey(message.id, kind, index);
       if (!state.outbox.some(entry => entry.key === key)) state.outbox.push({
         messageId: message.id, chatId: message.chatId, text: part, format, kind, key, createdAt: Date.now(),
@@ -199,7 +208,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
       save();
       log('session_renamed', { chatId: message.chatId, messageId: message.id });
       return reply(message, `已将${target.kind === 'workspace' ? ' workspace ' : ''}会话重命名为「${label}」${name ? '' : '（根据对话内容自动生成）'}。`
-        + (target.kind === 'workspace' ? '/status 里会显示这个名字。' : '/sessions 列表和终端的会话列表里也会显示新名字。'), 'rename');
+        + (target.kind === 'workspace' ? '回复首行和 /status 里会显示这个名字。' : '/sessions 列表和终端的会话列表里也会显示新名字。'), 'rename');
     } catch (error) {
       log('rename_error', { messageId: message.id, type: error.code || error.name });
       if (!stopping) await reply(message, error.message, 'error').catch(() => {});

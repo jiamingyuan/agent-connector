@@ -1,9 +1,16 @@
 // Lark event and lark-cli details: which events reach the hub, the request text after removing
 // the bot mention, and the arguments for sending one queued reply part.
+// ownerOpenId (one user) and ownerOpenIds (several) may be combined. Every listed user is fully
+// trusted: they drive the same agent with the same machine permissions.
+export function allowedUsers(config) {
+  return [...new Set([config.ownerOpenId, ...(Array.isArray(config.ownerOpenIds) ? config.ownerOpenIds : [])]
+    .filter(id => typeof id === 'string' && /^ou_[A-Za-z0-9_-]+$/.test(id)))];
+}
+
 export function eventDecision(event, config, now = Date.now()) {
   if (event.type !== 'im.message.receive_v1') return 'event_type';
   if (event.sender_type !== 'user') return 'sender_type';
-  if (event.sender_id !== config.ownerOpenId) return 'sender';
+  if (!allowedUsers(config).includes(event.sender_id)) return 'sender';
   if (event.chat_type === 'group') {
     if (config.allowGroupMentions !== true) return 'chat_type';
     if (!/^ou_[A-Za-z0-9_-]+$/.test(config.botOpenId || '')) return 'bot_identity';

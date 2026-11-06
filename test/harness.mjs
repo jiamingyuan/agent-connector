@@ -123,5 +123,10 @@ process.stdin.on('data',x=>input+=x);process.stdin.on('end',()=>{
   }
   assert.equal(replies.length, events.length, diagnostic);
   assert.deepEqual(replies.map(r => r.id), events.map((_, index) => `om_step_${index}`));
+  // Split each reply into its header line (session name and mode) and the body.
+  replies = replies.map(reply => {
+    const match = /^(\*\*[^\n]*\*\*(?: -- [^\n]*)?|【[^\n]*】(?: -- [^\n]*)?)\n([\s\S]*)$/.exec(reply.text);
+    return match ? { ...reply, head: match[1], text: match[2], raw: reply.text } : { ...reply, head: null, raw: reply.text };
+  });
   return { root, replies, calls: await readLines('calls.jsonl'), state: JSON.parse(await fs.readFile(path.join(root, 'runtime/state.json'), 'utf8')) };
 }

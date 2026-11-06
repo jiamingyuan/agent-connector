@@ -43,3 +43,7 @@ test('selected-session replies put the bold session name on its own line above e
   const plain = replyParts('中文🙂'.repeat(4000), 'text', '会话名');
   assert(plain.length > 1 && plain.every(part => part.startsWith('【会话名】\n') && Buffer.byteLength(part) <= 12_000));
 });
+test('the header can carry a note after the session name', () => {
+  assert.deepEqual(replyParts('内容', 'markdown', 'workspace', 'auto mode'), ['**workspace** -- auto mode\n内容']);
+  assert.deepEqual(replyParts('内容', 'text', 'workspace', '⚠️ bypassPermissions mode'), ['【workspace】 -- ⚠️ bypassPermissions mode\n内容']);
+});

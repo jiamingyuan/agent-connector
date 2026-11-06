@@ -90,3 +90,27 @@ test('reject too many, oversized, inaccessible and misplaced images instead of s
     return { saved_path };
   }, root), /图片过大/);
 });
+test('macOS-style symlinked paths are accepted, but a downloaded symlink to another file is not', async t => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lark-images-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  // The workspace is reached through a symlink, like /var -> /private/var on macOS.
+  fs.mkdirSync(path.join(root, 'real-workspace'));
+  fs.symlinkSync(path.join(root, 'real-workspace'), path.join(root, 'workspace'));
+  const config = { workspace: path.join(root, 'workspace') };
+  const event = { message_id: 'om_mac', message_type: 'image', content: '[Image: img_v3_mac]' };
+  // lark-cli reports the saved file through a symlinked alias of the staging directory.
+  const images = await prepareImages(event, config, async (args, timeout, cwd) => {
+    const alias = path.join(root, 'staging-alias');
+    fs.rmSync(alias, { force: true });
+    fs.symlinkSync(cwd, alias);
+    fs.writeFileSync(path.join(cwd, 'image-1.jpg'), jpeg);
+    return { saved_path: path.join(alias, 'image-1.jpg') };
+  });
+  assert.equal(images.length, 1);
+  assert(images[0].path.startsWith(path.join(root, 'real-workspace', 'attachments') + path.sep));
+  fs.writeFileSync(path.join(root, 'secret.txt'), 'not an image');
+  await assert.rejects(prepareImages({ ...event, message_id: 'om_link' }, config, async (args, timeout, cwd) => {
+    fs.symlinkSync(path.join(root, 'secret.txt'), path.join(cwd, 'image-1.jpg'));
+    return { saved_path: path.join(cwd, 'image-1.jpg') };
+  }), /下载结果异常/);
+});

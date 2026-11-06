@@ -1,6 +1,7 @@
 {
-  "name": "lark-agent-bridge",
+  "name": "agent-connector",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "start": "node bridge.mjs",

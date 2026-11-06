@@ -1,33 +1,40 @@
-# lark-agent-bridge 项目简介
+# agent-connector 项目简介
 
-记录：2026-11-03。来源：[README](../README.md)、仓库提交，以及用户在终端和飞书中的要求（原话见下）。功能、配置、命令和部署细节以 README 为准，这里不重复。
+记录：2026-11-05，核对提交 `a798151` 加 [Unreleased](Unreleased/iteration.md) 中的改动。功能、配置、命令和部署细节以 [README](../README.md) 为准；各项的用户原话、决定状态与验证见对应版本记录。
 
 ## 项目介绍
 
 ### 项目定位
 
-通过飞书官方 `lark-cli` 接收消息，调用本机 Codex 或 Claude Code，再以飞书机器人身份回复（README）。当前实例是机器人 Sophia：Claude Code 后端，只处理配置中指定用户的私聊，工作区为仓库内的 `workspace/`。
+通过飞书官方 `lark-cli` 接收消息，调用本机 Claude Code 或 Codex，再以飞书机器人身份回复。当前实例是机器人 Sophia：Claude Code，只处理指定用户的私聊。
 
 为什么做、服务谁之外的定位：待确认。
 
 ### 项目概要
 
-现有能力，详见 README：
-
-- 每个聊天独立的 Agent 会话：同一聊天串行执行，消息去重，发送失败的回复在本地排队重试；`/new`、`/status`、`/stop`、`/help`。
-- Claude Code 后端支持图片和图文消息，以及 Markdown 富文本回复。
-- 群聊 @机器人：可选，默认关闭，当前实例未开启。
-- 长期运行：`service.mjs` 只支持 Debian（提交 `827b30e`）。有 systemd 时安装为系统服务，否则用内置守护进程，后者不随容器重启自动启动。
-- V1.0（2026-11-03）：可选会话（`/sessions`、`/switch`、`/exit`）、默认 `auto` 权限模式与 `/mode`、`/usage`；渠道与 Agent 拆成可替换模块，新模块按 [core/README.md](../core/README.md) 接入，`example-agent/` 为模板。
-- V1.1（2026-11-04）：`/compact` 压缩会话上下文、`/rename` 重命名会话；飞书图片适配 `lark-cli` 1.0.98；失败时回复真实原因。
+消息渠道（收发消息）、中枢（排队、发件箱、聊天状态、指令）与 Agent 适配器（运行对话）通过接口连接，可以扩展到其他渠道和 Agent；接入步骤见 [core/README.md](../core/README.md)。
 
 ### 项目价值
 
-- 待确认。实际用法：2026-11-03 用户在飞书里切进本机终端中的 Claude Code 会话继续开发，并在飞书里提出了 `/usage` 等需求。
+- 待确认。实际用法：用户在飞书里切进本机终端中的 Claude Code 会话继续开发（2026-11-03 起）。
 
 ### 长期愿景
 
 暂无用户提出的长期规划。
+
+## 项目功能
+
+| 功能 | 所属版本 |
+| --- | --- |
+| 每个聊天独立会话，串行执行、去重、回复失败重试；`/new`、`/status`、`/stop`、`/help`；Claude Code 收图片、Markdown 回复 | 首次导入起；图片适配 `lark-cli` 1.0.98 见 [V1.1](V1.1/iteration.md) |
+| 渠道与 Agent 模块化、接入指南、`example-agent/` 模板 | [V1.0](V1.0/iteration.md) |
+| 可选会话 `/sessions`、`/switch`、`/exit`，进入时发前情梗概 | [V1.0](V1.0/iteration.md) |
+| 默认权限模式 `auto`，`/mode` 按聊天切换；每条回复首行显示会话名与模式 | [V1.0](V1.0/iteration.md)；首行显示见 [Unreleased](Unreleased/iteration.md) |
+| `/usage` 查询订阅用量 | [V1.0](V1.0/iteration.md) |
+| `/compact`、`/rename`；失败时回复真实原因 | [V1.1](V1.1/iteration.md) |
+| 服务管理：Linux（systemd）、macOS（LaunchAgent）、其他环境内置守护进程；`doctor` 检查 | [Unreleased](Unreleased/iteration.md)，此前只支持 Debian |
+| 多个授权用户 `ownerOpenIds` | [Unreleased](Unreleased/iteration.md) |
+| MIT 许可证 | [Unreleased](Unreleased/iteration.md) |
 
 ## 术语
 
@@ -36,34 +43,7 @@
 | workspace 会话 | 默认会话：桥接程序在 `config.workspace` 下为每个聊天创建并续接的 Claude Code 会话 |
 | 选择的会话 | 用 `/switch` 进入的本机其他 Claude Code 会话，例如终端里开的会话；在该会话自己的目录中用 `--resume` 续接 |
 | 前情梗概 | 进入会话时发送的摘要，在原会话的临时分支上生成，不写入任何会话记录 |
-| 渠道（channel） | 消息接收端，如飞书；目录 `<名称>-channel/`。用户起的名字是“消息接收端”，并允许换成更专业的名字 |
+| 渠道（channel） | 消息接收端，如飞书；目录 `<名称>-channel/` |
 | Agent 适配器（agent） | 运行对话的一端，如 Claude Code、Codex；目录 `<名称>-agent/` |
-| 中枢（hub） | `core/`，连接两端，负责排队、发件箱、状态和命令 |
+| 中枢（hub） | `core/`，连接两端，负责排队、发件箱、状态和指令 |
 | 权限模式 | Claude Code 的 `--permission-mode`。桥接程序始终带 `--permission-prompts none`，需要确认的操作一律拒绝 |
-
-## 已确认的决定
-
-- 2026-11-02 服务管理只支持 Debian，移除 macOS 与容器脚本。用户原话未留存，依据为提交 827b30e。
-- 2026-11-03 可选会话。用户原话（终端）：“是否能将lark-agent-bridge开发成可选会话？方式是：在飞书agent上通过指令选择会话；选择完会话以后，飞书agent发一个会话前面的context梗概给用户；飞书在这个会话中，每次回复用户信息里都是：text_bf{{会话名}} 换行 {回复内容}；再设计一个退出会话的指令，退出后回到workspace会话”。其中 `text_bf` 由 Agent 理解为加粗，用户未另行确认。
-- 2026-11-03 默认权限模式为 `auto`，并可用指令切换。用户先在飞书说“将dontask模式切成auto模式，后面lark-agent-bridge都用这个模式”，后在终端要求“将lark-agent-bridge 默认的模式改为auto，并且支持通过指令切换模式”。
-- 2026-11-03 支持查询用量。用户在飞书两次提出：“将/usage查询余量的能力也开发进来吧”。
-- 2026-11-03 补充接入说明、清理无用文件并作为 V1.0 推送。用户原话（飞书）：“把这些信息补充一下，做到agent通过读readme也能快速准确接入，同时scan一下整个项目有哪些文件是不需要的，删除一下，最后再push到github上，作为V1.0”。
-- 2026-11-04 增加上下文压缩。用户原话（飞书）：“增加这里context compact能力”。
-- 2026-11-04 增加会话重命名。用户原话（终端）：“现在有/rename能力吗，没有的话加一个”。
-- 2026-11-04 作为 V1.1 推送。用户原话：“push一下变更吧，作为V1.1”。
-- 2026-11-03 用 pjkp 管理本项目。用户原话：“通过pjkp来管理lark-agent-bridge”。
-- 2026-11-03 拆成通过接口连接的两类模块，并支持以后扩展。用户原话（飞书）：“将这个项目拆成通过接口连接的agent端与消息接收端（这里我名字可能起得不是很好，如果有更专业的就用更专业的名字）……命名为claude-code-{agent端}、lark-{消息接收端}两个文件夹，并且支持后面扩展其他的模块（codex、slack、wechat等）”。Agent 据此命名为 `claude-code-agent/`、`lark-channel/`，现有 Codex 支持拆为 `codex-agent/`。
-
-## Agent 的实现取舍（用户未明确确认）
-
-以下由 Agent 在实现时决定并写入 README，用户没有提出异议，也没有明确确认；用户提出新要求时以新要求为准。
-
-- 会话列表默认只列终端或 IDE 里开启的会话，`/sessions all` 才包括 `claude -p` 脚本会话；工作区自己的会话不列出，用 `/exit` 返回。
-- 会话正在终端执行任务时，拒绝切换进入，也不执行发来的消息；终端空闲打开时允许进入，并提醒飞书里的对话不会出现在那个终端窗口。
-- 会话切换只在私聊可用；群聊不能用 `/mode` 切换到 `bypassPermissions`。
-- `/mode` 按聊天保存，与 `/new`、`/switch` 一样按顺序排队生效。
-
-## 尚未确定
-
-- 飞书中“加粗会话名 + 单个换行”的实际显示效果：测试用的是模拟的 lark-cli，用户尚未确认。
-- 项目价值与长期愿景。
