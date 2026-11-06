@@ -1,8 +1,8 @@
 # agent-connector 项目入口
 
-当前状态（2026-11-05，核对提交 `a798151`，即 V1.1）：V1.1 已发布到 GitHub（标签 `V1.1`）。之后的多系统兼容、`doctor`、多用户、MIT 许可证和回复首行显示权限模式已在本机上线，但未提交、未推送，见 [Unreleased](Unreleased/iteration.md)。飞书机器人 Sophia 以 Claude Code 在本机长期运行，运行环境见[架构](architecture.md)。用户验收未进行。
+当前状态（2026-11-06，核对提交 `28ffd96`）：项目已改名 agent-connector（原 lark-agent-bridge），GitHub 仓库由用户改名。V1.1 之后的多系统兼容、`doctor`、多用户、MIT 许可证、回复首行显示权限模式和改名已上线并推送到 `main`，未打版本标签，见 [Unreleased](Unreleased/iteration.md)。飞书机器人 Sophia 以 Claude Code 在本机长期运行，运行环境见[架构](architecture.md)。用户验收未进行。
 
-下一步：待用户为 Unreleased 命名版本，并决定是否提交、推送。
+下一步：用户在 GitHub 改名仓库；待用户为 Unreleased 命名版本。
 
 - [规则](rules.md)：暂无。
 - [项目简介](project-brief.md)：定位、功能及所属版本、术语。

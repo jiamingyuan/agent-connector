@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-日期与核对提交：2026-11-05，基于 `a798151`（V1.1）。以下改动均未提交、未推送，版本号未定。未提交的文件：`README.md`、`core/hub.mjs`、`core/text.mjs`、`lark-channel/images.mjs`、`lark-channel/protocol.mjs`、`package.json`、`service.mjs`、`test/` 下 7 个测试文件，新增 `LICENSE`、`service/`、`test/service.test.mjs`，以及 `pjkp/`。
+日期与核对提交：2026-11-06，`28ffd96`（基于 V1.1 的 `a798151`）。以下改动已按用户要求提交并推送到 `main`，没有打版本标签，版本号未定。
 
 已在本机上线：多系统部分 2026-11-04 12:17（UTC），回复首行显示权限模式 12:28（UTC）；之后飞书正常使用至 2026-11-05。用户验收未进行。
 
