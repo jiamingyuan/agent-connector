@@ -97,7 +97,7 @@ process.stdin.on('data',x=>input+=x);process.stdin.on('end',()=>{
  // With --input-format stream-json the input is one user message whose content carries the images.
  let images=0,text=input;
  if(args.includes('--input-format')){const m=JSON.parse(input).message;images=m.content.filter(b=>b.type==='image').length;text=m.content.find(b=>b.type==='text').text;}
- fs.appendFileSync(path.join(root,'calls.jsonl'),JSON.stringify({args,resumed,summary,mode,cwd:process.cwd(),input:text,images})+'\\n');
+ fs.appendFileSync(path.join(root,'calls.jsonl'),JSON.stringify({args,resumed,summary,mode,cwd:process.cwd(),input:text,images,entrypoint:process.env.CLAUDE_CODE_ENTRYPOINT})+'\\n');
  const outbox=(/\\[桥接回传文件\\]\\n[^\\n]*?请保存到这个目录：([^\\n]+?)。本轮结束后/.exec(text)||[])[1];
  if(outbox&&text.startsWith('MAKE-FILES')){
   fs.writeFileSync(path.join(outbox,'report.md'),'# report');fs.writeFileSync(path.join(outbox,'empty.txt'),'');
@@ -118,7 +118,7 @@ process.stdin.on('data',x=>input+=x);process.stdin.on('end',()=>{
 `, { mode: 0o700 });
   await fs.writeFile(path.join(root, 'config.json'), JSON.stringify({
     backend: 'claude', profile: 'fake', ownerOpenId: 'ou_owner', botName: 'Cora', larkBin: fakeLark, claudeBin: fakeAgent,
-    replyFormat: 'markdown', workspace: root, maxEventAgeMs: 300_000, turnTimeoutMs: 10_000, ...config,
+    replyFormat: 'markdown', workspace: root, sessionDir: root, maxEventAgeMs: 300_000, turnTimeoutMs: 10_000, ...config,
   }));
   child = spawn(process.execPath, [path.join(root, 'bridge.mjs')], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } });
   let diagnostic = '';

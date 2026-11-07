@@ -26,13 +26,14 @@ test('auto is the default and /mode switches this chat in order, keeping bypass 
     [['第一条', 'auto'], ['第二条', 'plan'], ['第三条', 'bypassPermissions'], ['第四条', 'auto']]);
   assert(calls.every(call => call.args[call.args.indexOf('--permission-prompts') + 1] === 'none'));
   assert.deepEqual(state.modes, {});
-  // Every reply carries the mode in effect; the high-risk one is flagged.
+  // Every reply carries the mode in effect; the high-risk one is flagged. After the first answer the
+  // workspace session has its automatic name.
   assert.equal(replies[0].head, '**workspace** -- auto mode');
-  assert.equal(replies[2].head, '**workspace** -- plan mode');
-  assert.equal(replies[4].head, '**workspace** -- plan mode');
-  assert.equal(replies[7].head, '**workspace** -- ⚠️ bypassPermissions mode');
-  assert.equal(replies[9].head, '**workspace** -- ⚠️ bypassPermissions mode');
-  assert.equal(replies[10].head, '**workspace** -- auto mode');
+  assert.equal(replies[2].head, '**auto-name** -- plan mode');
+  assert.equal(replies[4].head, '**auto-name** -- plan mode');
+  assert.equal(replies[7].head, '**auto-name** -- ⚠️ bypassPermissions mode');
+  assert.equal(replies[9].head, '**auto-name** -- ⚠️ bypassPermissions mode');
+  assert.equal(replies[10].head, '**auto-name** -- auto mode');
 });
 
 test('/usage answers immediately from Claude Code without a model turn or saved session', { timeout: 20_000 }, async t => {

@@ -18,7 +18,8 @@ test('/rename names the workspace session, generates a name when none is given, 
   assert(text[6].includes('当前会话：workspace（auto-name）'), text[6]);
   const session = state.sessions.oc_private.id;
   const renames = await readLines(path.join(root, 'renames.jsonl'));
-  assert.deepEqual(renames.map(r => [r.resumed, r.input]), [[session, '/rename 飞书 助手'], [session, '/rename']]);
+  // The first is the automatic name after the first answer.
+  assert.deepEqual(renames.map(r => [r.resumed, r.input]), [[session, '/rename'], [session, '/rename 飞书 助手'], [session, '/rename']]);
   assert.equal(state.sessions.oc_private.name, 'auto-name');
   // The workspace header follows the name.
   assert.equal(replies[2].head, '**飞书 助手** -- auto mode');

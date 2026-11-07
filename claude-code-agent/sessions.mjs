@@ -68,7 +68,7 @@ function inspect(folder, name) {
   const cwd = cwds.find(dir => dir.replace(/[^a-zA-Z0-9]/g, '-') === path.basename(folder)) || cwds[0];
   const id = transcriptName.exec(name)[1].toLowerCase();
   const session = firstPrompt && replies && cwd ? {
-    id, file, cwd, mtimeMs, headless: entrypoint.startsWith('sdk'),
+    id, file, cwd, mtimeMs, headless: entrypoint.startsWith('sdk'), named: Boolean(customTitle || agentName || aiTitle),
     name: sessionLabel(customTitle || agentName || aiTitle || firstPrompt.split('\n')[0]) || id.slice(0, 8),
   } : null;
   cache.set(file, { size, mtimeMs, session });
@@ -98,10 +98,11 @@ export function listSessions({ home = claudeHome(), exclude = [] } = {}) {
 
 // Default view: sessions started in a terminal or IDE. "all" adds scripted `claude -p` runs;
 // any other text is a keyword matched against every session's name, directory and ID.
-export function filterSessions(sessions, query = '') {
+export function filterSessions(sessions, query = '', { include = [] } = {}) {
   const value = query.trim().toLowerCase();
   if (value === 'all' || value === '全部') return sessions;
-  if (!value) return sessions.filter(session => !session.headless);
+  // Default view: interactive sessions, named ones (the bridge names its own sessions) and any listed in include.
+  if (!value) return sessions.filter(session => !session.headless || session.named || include.includes(session.id));
   return sessions.filter(session => [session.name, session.cwd, session.id].some(field => field.toLowerCase().includes(value)));
 }
 
@@ -115,6 +116,28 @@ export function pickSession(sessions, query, listed = []) {
   }
   const name = sessionLabel(query).toLowerCase();
   return sessions.filter(session => session.name.toLowerCase() === name);
+}
+
+function move(from, to) {
+  try { fs.renameSync(from, to); }
+  catch (error) {
+    if (error.code !== 'EXDEV') throw error;
+    fs.cpSync(from, to, { recursive: true, preserveTimestamps: true });
+    fs.rmSync(from, { recursive: true, force: true });
+  }
+}
+
+// Deleting moves the transcript and its <id>/ folder (titles, subagent transcripts) into the trash,
+// so it leaves both /sessions and the terminal's /resume. restore.json says where to move them back.
+export function trashSession(session, trashRoot) {
+  const folder = path.dirname(session.file);
+  const target = path.join(trashRoot, `${new Date().toISOString().replace(/[:.]/g, '-')}-${session.id}`);
+  fs.mkdirSync(target, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(target, 'restore.json'), JSON.stringify({ id: session.id, name: session.name, cwd: session.cwd,
+    restoreTo: folder, deletedAt: new Date().toISOString() }, null, 2) + '\n');
+  for (const item of [session.file, path.join(folder, session.id)]) if (fs.existsSync(item)) move(item, path.join(target, path.basename(item)));
+  cache.delete(session.file);
+  return { trash: target, restoreTo: folder };
 }
 
 function alive(pid) {
@@ -161,15 +184,15 @@ export function formatSessionList(shown, { total = shown.length, running = new M
   const lines = [];
   if (!shown.length) lines.push(query ? `没有找到匹配「${query}」的会话。` : '还没有可切换的会话。');
   else {
-    lines.push('可切换的会话（最近活动在前）：');
+    lines.push('会话（最近活动在前）：');
     for (const [index, session] of shown.entries()) {
       const terminal = running.get(session.id);
       const marks = [session.id === current && '当前', terminal && (terminal.busy ? '终端执行中' : '终端打开中'),
-        session.headless && '脚本'].filter(Boolean);
+        session.headless && !session.named && '脚本'].filter(Boolean);
       lines.push(`${index + 1}. ${session.name} · ${session.cwd} · ${timeAgo(session.mtimeMs, now)}${marks.map(mark => ' · ' + mark).join('')}`);
     }
     if (total > shown.length) lines.push(`另有 ${total - shown.length} 个更早的会话，可用 /sessions 关键词 筛选。`);
   }
-  lines.push('', '发送 /switch 编号 进入会话，/exit 回到 workspace 会话；/sessions all 包括脚本（claude -p）会话。');
+  lines.push('', '发送 /switch 编号 进入会话，/exit 回到这个聊天的默认会话；/sessions all 还会列出未命名的脚本（claude -p）会话。');
   return lines.join('\n');
 }

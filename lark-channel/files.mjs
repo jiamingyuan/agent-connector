@@ -4,7 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { messageDirectory, withStaging, download } from './download.mjs';
 
-export const fileLimits = { bytes: 50 * 1024 * 1024 };
+// Default cap for received files; an 88 MB file downloaded fine from Feishu (2026-11-07). config.maxFileBytes overrides it.
+export const fileLimits = { bytes: 100 * 1024 * 1024 };
+export const maxFileBytes = config => (Number.isFinite(config.maxFileBytes) && config.maxFileBytes > 0 ? config.maxFileBytes : fileLimits.bytes);
 
 const unescapeXml = text => text.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 
@@ -37,9 +39,11 @@ export function safeFileName(name, fallback) {
   return clean || fallback;
 }
 
+// file / folder messages, and rich-text (post) messages that carry files in their attachment zone.
 export async function prepareFiles(event, config, runLark) {
-  if (!['file', 'folder'].includes(event.message_type)) return [];
+  if (!['file', 'folder', 'post'].includes(event.message_type)) return [];
   let { refs, folder } = fileRefs(event.content);
+  if (event.message_type === 'post' && !refs.length && !folder) return [];
   if (!refs.length && !folder && event.message_type === 'file') {
     // Some CLI versions omit resource keys from the compact event. Fetch the same message.
     const data = await runLark(['im', '+messages-mget', '--as', 'bot', '--message-ids', event.message_id, '--no-reactions']);
@@ -52,9 +56,10 @@ export async function prepareFiles(event, config, runLark) {
     const files = [];
     for (const [index, ref] of refs.entries()) {
       const real = await download(runLark, staging, { messageId: event.message_id, key: ref.key, type: 'file', output: `file-${index + 1}`,
-        timeoutMs: 120_000, failure: '飞书文件下载失败，请重发；若仍失败，请检查机器人的消息资源读取权限和网络。' });
+        timeoutMs: 300_000, failure: '飞书文件下载失败，请重发；若仍失败，请检查机器人的消息资源读取权限和网络。' });
       const size = fs.statSync(real).size;
-      if (size > fileLimits.bytes) throw new Error(`文件过大：单个文件最多 ${fileLimits.bytes / 1024 / 1024} MiB，请压缩或拆分后发送。`);
+      const limit = maxFileBytes(config);
+      if (size > limit) throw new Error(`文件过大：单个文件最多 ${Math.round(limit / 1024 / 1024)} MiB，请压缩或拆分后发送。`);
       const name = safeFileName(ref.name || path.basename(real), `file-${index + 1}`);
       const file = path.join(directory, name);
       fs.copyFileSync(real, file);

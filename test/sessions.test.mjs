@@ -117,7 +117,7 @@ test('labels are single-line, Markdown-safe and bounded; list text shows termina
     { id: 'two', name: '项目二', cwd: '/srv/two', mtimeMs: now - 120_000, headless: true }];
   const text = formatSessionList(shown, { total: 5, now, current: 'two',
     running: new Map([['one', { pid: 1, busy: false }], ['two', { pid: 2, busy: true }]]) });
-  assert.match(text, /^可切换的会话/);
+  assert.match(text, /^会话（最近活动在前）/);
   assert(text.includes('1. 项目一 · /srv/one · 刚刚 · 终端打开中'));
   assert(text.includes('2. 项目二 · /srv/two · 2 分钟前 · 当前 · 终端执行中 · 脚本'));
   assert(text.includes('另有 3 个更早的会话'));

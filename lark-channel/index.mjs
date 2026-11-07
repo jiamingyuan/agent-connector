@@ -8,7 +8,7 @@ import path from 'node:path';
 import { eventDecision, messageText, replyArgs, fileReplyArgs } from './protocol.mjs';
 import { withStaging } from './download.mjs';
 import { prepareImages } from './images.mjs';
-import { prepareFiles } from './files.mjs';
+import { prepareFiles, maxFileBytes } from './files.mjs';
 
 export const requiredBins = config => [config.larkBin];
 
@@ -111,5 +111,6 @@ export function createChannel(config, { root, env, log }) {
       .catch(error => log('ack_reaction_failed', { messageId: message.id, type: error.detail?.subtype || error.name })),
     attachments: message => prepareImages(message.raw, config, runLark),
     files: message => prepareFiles(message.raw, config, runLark),
+    incomingFileBytes: maxFileBytes(config),
   };
 }

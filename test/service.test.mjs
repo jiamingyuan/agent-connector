@@ -65,7 +65,7 @@ test('doctor reports tool versions and catches unreadable Claude Code session re
   let result = await run();
   assert.equal(result.code, 0, result.text);
   assert.match(result.text, /✓ lark-cli 1\.0\.98/);
-  assert.match(result.text, /⚠ claude-code 9\.9\.9; this code was last verified with 2\.1\.318/);
+  assert.match(result.text, /⚠ claude-code 9\.9\.9; this code was last verified with 2\.1\.319/);
   assert.match(result.text, /✓ Claude Code sessions readable: 1 of 1/);
   // A format change: records exist but none parse into a conversation.
   fs.writeFileSync(path.join(project, 'aaaaaaaa-0000-4000-8000-000000000001.jsonl'), JSON.stringify({ kind: 'turn', v: 2 }));

@@ -67,7 +67,12 @@ test('folders, oversized files and failed downloads are refused with a clear rea
     fs.writeFileSync(saved, '');
     fs.truncateSync(saved, fileLimits.bytes + 1); // sparse, so the test stays fast
     return { saved_path: saved };
-  }), /文件过大：单个文件最多 50 MiB/);
+  }), /文件过大：单个文件最多 100 MiB/);
+  // config.maxFileBytes sets a different cap.
+  await assert.rejects(prepareFiles(event, { ...config, maxFileBytes: 1024 * 1024 }, async (args, timeout, cwd) => {
+    fs.writeFileSync(path.join(cwd, 'file-1.zip'), Buffer.alloc(2 * 1024 * 1024));
+    return { saved_path: path.join(cwd, 'file-1.zip') };
+  }), /文件过大：单个文件最多 1 MiB/);
   await assert.rejects(prepareFiles(event, config, async () => { throw new Error('denied'); }), /飞书文件下载失败/);
   await assert.rejects(prepareFiles({ ...event, content: '' }, config, async () => ({ messages: [] })), /没有取到这个文件/);
 });
@@ -98,4 +103,18 @@ test('a received file is confirmed, handed to the agent with the next message, a
   const downloads = fs.readFileSync(path.join(root, 'downloads.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
   assert.deepEqual(downloads.map(d => [d.key, d.type]), [['file_v3_report', 'file']]);
   assert(path.basename(downloads[0].cwd).startsWith('lark-files-'));
+});
+
+test('a file attached to a text message (one rich-text post) goes to the agent with that same message', { timeout: 20_000 }, async t => {
+  const events = [{ ...privateEvent, message_type: 'post', content: '根据这里聊的内容生成大纲\n<file key="file_v3_inline" name="pretalk_沟通记录.md"/>' },
+    { ...privateEvent, message_type: 'post', content: '没有附件的富文本' }];
+  const { root, replies, calls, state } = await runBridge(t, async () => ({ events }));
+  assert.equal(replies.length, 2);
+  assert(!replies[0].text.startsWith('已收到文件'), 'no separate receipt: the request came with the file');
+  const call = calls[0];
+  assert(call.input.startsWith('根据这里聊的内容生成大纲') && call.input.includes('- pretalk_沟通记录.md（25 B）：' + path.join(root, 'attachments')));
+  assert(!calls[1].input.includes('[桥接附件信息]'));
+  assert.deepEqual(state.pendingFiles, {});
+  const downloads = fs.readFileSync(path.join(root, 'downloads.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(downloads.map(d => [d.key, d.type]), [['file_v3_inline', 'file']]);
 });

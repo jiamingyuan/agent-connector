@@ -1,16 +1,22 @@
 // Agent adapter: local Claude Code CLI. Implements the agent interface in core/README.md, plus the
 // optional features modes (/mode), usage (/usage), compact (/compact), rename (/rename) and sessions
-// (/sessions, /switch, /exit).
+// (/sessions, /switch, /exit, /delete).
 import path from 'node:path';
 import { runCliTurn, runCliQuery } from '../core/cli-turn.mjs';
 import { permissionModes, permissionMode, findPermissionMode, turnArgs, recapArgs, usageArgs, recapPrompt, turnInput,
   parseEvent, compactArgs, compactInput, parseCompactEvent, renameArgs, renameInput, parseRenameEvent } from './cli.mjs';
 import { claudeHome, listSessions, filterSessions, pickSession, runningSessions, sessionDigest, formatSessionList,
-  timeAgo } from './sessions.mjs';
+  timeAgo, trashSession } from './sessions.mjs';
 
 export const requiredBins = config => [config.claudeBin];
 
-export function createAgent(config, { env }) {
+// Claude Code hides sessions whose recorded entrypoint is sdk-cli (what `claude -p` writes) from the
+// terminal /resume picker; any other preset value is kept (checked on 2.1.319). Naming the bridge as
+// the entrypoint keeps the sessions it creates listed there.
+export const ENTRYPOINT = 'agent-connector';
+
+export function createAgent(config, { env: baseEnv }) {
+  const env = { ...baseEnv, CLAUDE_CODE_ENTRYPOINT: ENTRYPOINT };
   const displayName = 'Claude Code';
   const home = claudeHome(env);
   const run = (args, input, cwd, timeoutMs, onSession) =>
@@ -19,8 +25,8 @@ export function createAgent(config, { env }) {
     id: 'claude-code',
     displayName,
     capabilities: { images: true, files: true },
-    runTurn: ({ sessionId, cwd, text, images = [], files = [], outbox, mode, timeoutMs, onSession }) =>
-      run(turnArgs(config, sessionId, { images, mode, files, cwd, outbox }), turnInput(text, images), cwd, timeoutMs, onSession),
+    runTurn: ({ sessionId, cwd, text, images = [], files = [], outbox, instructionsFile, mode, timeoutMs, onSession }) =>
+      run(turnArgs(config, sessionId, { images, mode, files, cwd, outbox, instructionsFile }), turnInput(text, images), cwd, timeoutMs, onSession),
     modes: {
       descriptions: permissionModes,
       resolve: override => permissionMode(config, override),
@@ -46,6 +52,7 @@ export function createAgent(config, { env }) {
       resumeHint: id => `claude --resume ${id}`,
       // Transcripts are <id>.jsonl; a resumed session that reports a new ID lives beside the old one.
       fileFor: (file, id) => path.join(path.dirname(file), `${id}.jsonl`),
+      trash: trashSession,
       // Never reports a session ID: the recap runs on a fork that is not saved.
       recap: ({ sessionId, cwd, timeoutMs }) => run(recapArgs(sessionId), recapPrompt, cwd, timeoutMs),
     },

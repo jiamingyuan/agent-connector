@@ -63,13 +63,14 @@ export function createAgent(config, context) {
 | 参数 | 类型 | 含义 |
 | --- | --- | --- |
 | `sessionId` | string \| undefined | 要续接的会话 ID；这个聊天第一轮或 `/new` 之后为 `undefined`，此时新建会话。 |
-| `cwd` | string | 本轮的工作目录：通常是 `config.workspace`，用 `/switch` 进入其他会话后是那个会话的目录。只支持固定目录的 Agent 可以忽略。 |
+| `cwd` | string | 本轮的工作目录：聊天默认会话为 `config.sessionDir`（默认主目录；早先创建的会话为 `config.workspace`），用 `/switch` 进入其他会话后是那个会话的目录。只支持固定目录的 Agent 可以忽略。 |
 | `text` | string | 发给 Agent 的完整文字。中枢已在用户原文后附加以 `\n\n[桥接` 开头的说明块（群聊范围、当前工作目录、渠道的回复格式要求），原样送入即可。 |
 | `images` | array | `capabilities.images` 为 true 且消息带图时为 `[{ path, mediaType, data }]`（本地文件路径、MIME 类型、base64 内容），否则为 `[]`。 |
 | `mode` | string \| undefined | 这个聊天用 `/mode` 选的模式；`undefined` 表示用默认值。没有 `modes` 的 Agent 忽略。 |
 | `timeoutMs` | number | 本轮最长运行时间（`config.turnTimeoutMs`）。Agent 必须自己在超时后停止。 |
 | `files` | array | 用户在这条消息之前发来、随本轮交付的文件 `[{ path, name, size }]`（`capabilities.files` 为 false 时始终为 `[]`）。中枢已在 `text` 里写明文件名和本地路径；Agent 要保证能读到这些路径，例如 Claude Code 在会话目录之外时加 `--add-dir`。 |
 | `outbox` | string \| undefined | 本轮发件目录，渠道支持发回文件且 `capabilities.files` 为 true 时提供。中枢已在 `text` 里告诉模型把要发给用户的文件存到这里；本轮成功后，中枢把目录里的普通文件（每个不超过渠道的 `fileReplies.maxBytes`，最多 5 个）作为回复发出。Agent 要保证能写这个目录，例如 Claude Code 在会话目录之外时加 `--add-dir`。 |
+| `instructionsFile` | string \| undefined | 默认会话不在 `config.workspace` 中运行时，指向 `workspace/CLAUDE.md`；Agent 应把它作为附加指令（Claude Code 用 `--append-system-prompt-file`）。 |
 | `turnKey` | string | 本条消息唯一、可安全用作文件名的键，例如 Codex 用它命名答案文件。 |
 | `onSession(id)` | function | 一旦知道会话 ID 就调用（可以多次）。中枢保存后，下一轮作为 `sessionId` 传回；不调用则每轮都是新会话。 |
 
@@ -136,6 +137,7 @@ runTurn: ({ sessionId, cwd, text, timeoutMs, onSession }) => runCliTurn({
 | `resumeHint(id)` | 返回在终端里重新打开该会话的命令，用于提醒。 |
 | `fileFor(file, id)` | 可选，会话 ID 变化后返回新的记录文件路径。 |
 | `recap({ sessionId, cwd, timeoutMs })` | 生成前情梗概，返回与 `runTurn` 相同的 `{ cancel, result }`；不得改动原会话，也不得调用 `onSession`。 |
+| `trash(session, trashRoot)` | 可选，提供时启用 `/delete`：把会话记录移出 Agent 的会话目录、放到 `trashRoot` 下，返回 `{ trash, restoreTo }`。中枢负责确认、拒绝当前或正在使用的会话，并清掉聊天对它的引用。 |
 
 ### Agent 的约定
 

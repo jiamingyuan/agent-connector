@@ -2,6 +2,7 @@
 // It owns everything that is neither channel- nor agent-specific: per-chat queues, dedupe, the reply
 // outbox, chat state and the commands. Interfaces: core/README.md.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { replyParts, replyKey, safeLabel } from './text.mjs';
 
@@ -37,6 +38,8 @@ export function createHub({ config, agent, channel, runtime, log }) {
   state.modes ||= {};
   // pendingFiles: chat ID -> files received but not yet handed to the agent (see receiveFiles).
   state.pendingFiles ||= {};
+  // pendingDeletes: chat ID -> { id, at } of the session a /delete is waiting to have confirmed.
+  state.pendingDeletes ||= {};
   const seen = new Set(state.seen);
   const active = new Map();
   const queues = new Map();
@@ -127,7 +130,10 @@ export function createHub({ config, agent, channel, runtime, log }) {
   function chatTarget(chatId) {
     const attached = state.attached[chatId];
     if (attached) return { kind: 'attached', id: attached.id, cwd: attached.cwd, name: attached.name, file: attached.file };
-    return { kind: 'workspace', id: state.sessions[chatId]?.id, cwd: config.workspace };
+    // New sessions start where Claude Code keeps sessions by default (sessionDir, the home dir unless
+    // configured), next to the user's own; sessions recorded without a cwd were made in the workspace.
+    const own = state.sessions[chatId];
+    return { kind: 'workspace', id: own?.id, cwd: own?.cwd || (own?.id ? config.workspace : config.sessionDir || os.homedir()) };
   }
   function rememberSession(chatId, target, id) {
     const updatedAt = new Date().toISOString();
@@ -139,7 +145,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
     } else {
       // A /rename name belongs to that session only.
       const previous = state.sessions[chatId];
-      state.sessions[chatId] = { id, updatedAt, ...(previous?.id === id && previous.name ? { name: previous.name } : {}) };
+      state.sessions[chatId] = { ...(previous?.id === id ? previous : {}), id, updatedAt, cwd: target.cwd };
     }
     save();
   }
@@ -183,6 +189,8 @@ export function createHub({ config, agent, channel, runtime, log }) {
   function runAgent(message, { images = [], files = [], outbox, target }) {
     return track(message, agent.runTurn({ sessionId: target.id, cwd: target.cwd, text: composeText(message, target, files, outbox), images, files, outbox,
       mode: state.modes[message.chatId], timeoutMs: config.turnTimeoutMs, turnKey: replyKey(message.id, 'output'),
+      // The bridge's own instructions (workspace/CLAUDE.md) still apply when the chat's session runs elsewhere.
+      instructionsFile: target.kind === 'workspace' && target.cwd !== config.workspace && fs.existsSync(path.join(config.workspace, 'CLAUDE.md')) ? path.join(config.workspace, 'CLAUDE.md') : undefined,
       onSession: id => rememberSession(message.chatId, target, id) }), 'agent');
   }
 
@@ -203,6 +211,27 @@ export function createHub({ config, agent, channel, runtime, log }) {
     } catch (error) {
       log('compact_error', { messageId: message.id, type: error.code || error.name });
       if (!stopping) await reply(message, error.message, 'error').catch(() => {});
+    }
+  }
+
+  // ---- automatic names ----
+  // Claude Code gives headless sessions no title, so a workspace session is named once, after an
+  // answer, through the agent's own rename with no name given (it picks one from the conversation).
+  async function autoName(message) {
+    const own = state.sessions[message.chatId];
+    if (!agent.rename || !own?.id || own.name || own.autoNamed) return;
+    own.autoNamed = true;
+    save();
+    try {
+      const name = await track(message, agent.rename({ sessionId: own.id, cwd: own.cwd || config.workspace, name: '', timeoutMs: RENAME_TIMEOUT_MS }), 'autoname');
+      const current = state.sessions[message.chatId];
+      if (name && current?.id === own.id && !current.name) {
+        current.name = safeLabel(name);
+        save();
+        log('session_autonamed', { chatId: message.chatId, messageId: message.id });
+      }
+    } catch (error) {
+      log('autoname_error', { messageId: message.id, type: error.code || error.name });
     }
   }
 
@@ -315,15 +344,19 @@ export function createHub({ config, agent, channel, runtime, log }) {
     return null;
   }
   // The bridge's own workspace sessions are reached with /exit, so they are not listed.
-  const catalog = () => sessions.list({ exclude: [config.workspace] });
+  // Every session except this chat's current workspace session, which is pinned as entry 0. Older
+  // workspace sessions are headless, so they appear only with /sessions all or a keyword.
+  // One list: the chat's own session sits among all the others, marked as current when in use.
+  const catalog = () => sessions.list({ exclude: [] });
   function showSessions(message, query) {
     const refusal = sessionCommandRefusal(message);
     if (refusal) return reply(message, refusal, 'sessions');
-    const found = sessions.filter(catalog(), query);
+    const own = state.sessions[message.chatId]?.id;
+    const found = sessions.filter(catalog(), query, { include: [own] });
     const shown = found.slice(0, LIST_LIMIT);
     state.listings[message.chatId] = shown.map(session => session.id); save();
     return reply(message, sessions.format(shown, { total: found.length, running: sessions.running(),
-      current: state.attached[message.chatId]?.id, query: safeLabel(query) }), 'sessions');
+      current: state.attached[message.chatId]?.id || own, query: safeLabel(query) }), 'sessions');
   }
   function fallbackRecap(file) {
     try {
@@ -332,19 +365,30 @@ export function createHub({ config, agent, channel, runtime, log }) {
         .filter(Boolean).join('\n');
     } catch { return '（自动梗概生成失败，也无法读取会话记录。）'; }
   }
+  // A number from the chat's last /sessions list, an ID prefix or a full session name.
+  function findSession(message, query) {
+    const all = catalog();
+    const own = state.sessions[message.chatId]?.id;
+    const listed = state.listings[message.chatId] || sessions.filter(all, '', { include: [own] }).slice(0, LIST_LIMIT).map(session => session.id);
+    const matches = sessions.pick(all, query, listed);
+    if (matches.length > 1) {
+      return { problem: `有 ${matches.length} 个会话匹配「${safeLabel(query)}」，请改用编号或会话 ID：\n`
+        + matches.slice(0, LIST_LIMIT).map(session => `${session.id.slice(0, 8)} · ${session.name} · ${session.cwd}`).join('\n') };
+    }
+    if (!matches.length) return { problem: `没有找到会话「${safeLabel(query)}」。发 /sessions 查看会话列表。` };
+    return { session: matches[0] };
+  }
   async function switchSession(message, query, generation) {
     const refusal = sessionCommandRefusal(message);
     if (refusal) return reply(message, refusal, 'switch');
     if (!query) return reply(message, '用法：/switch 编号。先发 /sessions 查看列表；也可以写会话 ID 的开头几位或完整会话名。', 'switch');
-    const all = catalog();
-    const listed = state.listings[message.chatId] || sessions.filter(all).slice(0, LIST_LIMIT).map(session => session.id);
-    const matches = sessions.pick(all, query, listed);
-    if (matches.length > 1) {
-      return reply(message, `有 ${matches.length} 个会话匹配「${safeLabel(query)}」，请改用编号或会话 ID：\n`
-        + matches.slice(0, LIST_LIMIT).map(session => `${session.id.slice(0, 8)} · ${session.name} · ${session.cwd}`).join('\n'), 'switch');
-    }
-    const [session] = matches;
-    if (!session) return reply(message, `没有找到会话「${safeLabel(query)}」。发 /sessions 查看可切换的会话。`, 'switch');
+    // Entry 0 is this chat's workspace session.
+    if (query.trim() === '0') return state.attached[message.chatId] ? exitSession(message) : reply(message, '当前已经在 workspace 会话中。', 'switch');
+    const own = state.sessions[message.chatId]?.id;
+    const { session, problem } = findSession(message, query);
+    if (problem) return reply(message, problem, 'switch');
+    // Picking the chat's own default session from the list is the same as /exit.
+    if (session.id === own) return state.attached[message.chatId] ? exitSession(message) : reply(message, '当前已经在这个会话中。', 'switch');
     if (state.attached[message.chatId]?.id === session.id) return reply(message, `已经在会话「${session.name}」中。发 /exit 回到 workspace 会话。`, 'switch');
     if (!fs.existsSync(session.cwd)) return reply(message, `会话目录 ${session.cwd} 已不存在，无法恢复这个会话。`, 'switch');
     const terminal = sessions.running().get(session.id);
@@ -380,6 +424,43 @@ export function createHub({ config, agent, channel, runtime, log }) {
     log('session_detached', { chatId: message.chatId, messageId: message.id });
     return reply(message, `已退出会话「${current.name}」，回到 workspace 会话。`, 'exit');
   }
+  // ---- /delete ----
+  // Any listed session can be deleted, the user's terminal ones included, after a confirmation. The
+  // files go to runtime/trash, so the session leaves this list and the terminal's /resume alike.
+  const DELETE_CONFIRM_MS = 10 * 60_000;
+  function deleteSession(message, query) {
+    const refusal = sessionCommandRefusal(message);
+    if (refusal) return reply(message, refusal.replace('会话切换', '删除会话'), 'delete');
+    const confirmed = /\s确认$/.test(` ${query}`);
+    const key = query.replace(/\s*确认$/, '').trim();
+    if (!key) return reply(message, '用法：/delete 编号。先发 /sessions 查看列表；确认后再发 /delete 编号 确认。', 'delete');
+    const { session, problem } = findSession(message, key);
+    if (problem) return reply(message, problem, 'delete');
+    const current = state.attached[message.chatId]?.id || state.sessions[message.chatId]?.id;
+    if (session.id === current) return reply(message, `「${session.name}」是当前所在的会话，不能删除。先 /new 或 /switch 到别的会话再删。`, 'delete');
+    if (sessions.running().has(session.id)) return reply(message, `会话「${session.name}」在终端里还开着，先退出那个终端窗口再删除。`, 'delete');
+    if ([...active.keys()].some(chatId => chatTarget(chatId).id === session.id)) return reply(message, `会话「${session.name}」正在${where}的另一个对话里执行任务，等它结束后再删除。`, 'delete');
+    const pending = state.pendingDeletes[message.chatId];
+    if (!confirmed || pending?.id !== session.id || Date.now() - pending.at > DELETE_CONFIRM_MS) {
+      state.pendingDeletes[message.chatId] = { id: session.id, at: Date.now() }; save();
+      return reply(message, [`将删除会话「${session.name}」`, `目录：${session.cwd}`, `最近活动：${sessions.ago(session.mtimeMs)}`, `会话 ID：${session.id}`,
+        `删除后它不再出现在 /sessions 和终端的 /resume 中，会话记录移到回收目录，可手动恢复。确认请在 10 分钟内发：/delete ${key} 确认`].join('\n'), 'delete');
+    }
+    delete state.pendingDeletes[message.chatId];
+    let moved;
+    try { moved = sessions.trash(session, path.join(runtime, 'trash')); }
+    catch (error) {
+      log('session_delete_error', { type: error.code || error.name }); save();
+      return reply(message, `删除失败（${error.code || error.name}），会话没有改动。`, 'delete');
+    }
+    // Chats that used this session start a new one next time.
+    for (const [chatId, own] of Object.entries(state.sessions)) if (own?.id === session.id) delete state.sessions[chatId];
+    for (const [chatId, attached] of Object.entries(state.attached)) if (attached?.id === session.id) delete state.attached[chatId];
+    save(); status();
+    log('session_deleted', { chatId: message.chatId, messageId: message.id });
+    return reply(message, `已删除会话「${session.name}」。\n会话记录已移到 ${moved.trash}；要恢复，把其中除 restore.json 外的文件移回 ${moved.restoreTo}。`, 'delete');
+  }
+
   // Checked before every turn in a selected session.
   function attachedProblem(target) {
     if (target.file && !fs.existsSync(target.file)) return `会话「${target.name}」的记录已不存在，无法继续。发 /exit 回到 workspace 会话。`;
@@ -424,7 +505,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
   // ---- help and status ----
   function helpText() {
     const lines = [`私聊直接发文字${agent.capabilities.images ? '或图片（支持图文混合，每条最多 4 张）' : ''}即可与 ${agentName} 对话。`
-      + (agent.capabilities.files && channel.files ? `\n也可以发文件（单个最多 50 MiB）：发完再说明要怎么处理，文件会随这条说明一起交给 ${agentName}。` : '')
+      + (agent.capabilities.files && channel.files ? `\n也可以发文件（单个最多 ${Math.round((channel.incomingFileBytes || 0) / 1024 / 1024)} MiB）：发完再说明要怎么处理，文件会随这条说明一起交给 ${agentName}。` : '')
       + (config.allowGroupMentions ? `\n群聊请 @${config.botName} 后发送请求或以下命令；只接受已授权用户，每个群使用独立上下文。` : ''),
     `/new：新会话${sessions ? '（会先退出已选择的会话）' : ''}`, '/status：查看状态', '/stop：停止当前任务并清空排队消息'];
     if (modes) lines.push(`/mode：查看或切换权限模式（${Object.keys(modes.descriptions).join('、')}）`);
@@ -433,6 +514,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
     if (agent.usage) lines.push(`/usage：${agent.usageLabel}`);
     if (sessions) lines.push(`/sessions：列出本机可切换的 ${agentName} 会话（仅私聊；/sessions all 包括脚本会话，/sessions 关键词 筛选）`,
       '/switch 编号：进入列表中的会话，并收到前情梗概', '/exit：退出当前会话，回到 workspace 会话');
+    if (sessions?.trash) lines.push('/delete 编号：删除列表中的会话（需再次确认；终端的 /resume 里也会消失）');
     lines.push('/help：使用说明');
     return lines.join('\n');
   }
@@ -467,6 +549,8 @@ export function createHub({ config, agent, channel, runtime, log }) {
     if (modeQuery !== null) return changeMode(message, modeQuery);
     const switchQuery = commandArgs(text, '/switch');
     if (switchQuery !== null) return switchSession(message, switchQuery, generation);
+    const deleteQuery = sessions?.trash ? commandArgs(text, '/delete') : null;
+    if (deleteQuery !== null) return deleteSession(message, deleteQuery);
     if (message.kind === 'file') return receiveFiles(message, generation);
     if (!['text', 'rich'].includes(message.kind) && !(agent.capabilities.images && message.kind === 'image')) {
       return reply(message, '目前支持文字对话，请把需要处理的内容或本机文件路径用文字发给我。', 'unsupported');
@@ -484,14 +568,19 @@ export function createHub({ config, agent, channel, runtime, log }) {
       const images = agent.capabilities.images && ['image', 'rich'].includes(message.kind) ? await channel.attachments(message) : [];
       if (superseded(message, generation)) return;
       if (images.length) log('images_prepared', { messageId: message.id, count: images.length });
-      const files = state.pendingFiles[message.chatId] || [];
+      // Files sent earlier on their own, plus files attached to this very message (text and file in one post).
+      const pending = state.pendingFiles[message.chatId] || [];
+      const inline = agent.capabilities.files && channel.files && message.kind === 'rich' ? await channel.files(message) : [];
+      if (inline.length) log('files_received', { messageId: message.id, count: inline.length });
+      if (superseded(message, generation)) return;
+      const files = [...pending, ...inline];
       const outbox = prepareOutbox(message);
       let result;
       try { result = await runAgent(message, { images, files, outbox, target }); }
       finally { if (outbox && !result) removeIfEmpty(outbox); }
       // Pending files are used up only by a completed turn; a failed or stopped one keeps them.
-      if (result !== null && files.length) {
-        const handed = new Set(files.map(file => file.path));
+      if (result !== null && pending.length) {
+        const handed = new Set(pending.map(file => file.path));
         const left = (state.pendingFiles[message.chatId] || []).filter(file => !handed.has(file.path));
         if (left.length) state.pendingFiles[message.chatId] = left; else delete state.pendingFiles[message.chatId];
         save();
@@ -499,6 +588,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
       if (result && !stopping) {
         await reply(message, result);
         if (outbox) await sendOutbox(message, outbox);
+        if (target.kind === 'workspace') await autoName(message);
       }
     } catch (error) {
       log('turn_error', { messageId: message.id, type: error.detail?.subtype || error.name });

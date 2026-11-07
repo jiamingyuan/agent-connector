@@ -54,7 +54,7 @@ test('owner lists, enters and leaves local Claude Code sessions from a private c
   assert.equal(fallback.head, '**脚本任务** -- auto mode');
   assert(fallback.text.startsWith('已进入会话「脚本任务」'), fallback.text);
   assert(fallback.text.includes('自动梗概生成失败') && fallback.text.includes('最近的提问：脚本任务') && fallback.text.includes('最近的回复：脚本完成'));
-  assert.equal(exitedAgain.head, '**workspace** -- auto mode');
+  assert.equal(exitedAgain.head, '**auto-name** -- auto mode', 'the workspace session was named after its first answer');
 
   assert.equal(calls.length, 4);
   const [recap, attachedTurn, workspaceTurn, failedRecap] = calls;
@@ -70,4 +70,50 @@ test('owner lists, enters and leaves local Claude Code sessions from a private c
   assert.deepEqual(Object.keys(state.sessions), ['oc_private']);
   assert.equal(state.sessions.oc_private.id, 'ws-session');
   assert.deepEqual(state.attached, {});
+});
+
+test('one list: the chat session sits among the others; after /new the next one starts in sessionDir', { timeout: 20_000 }, async t => {
+  // /switch numbers refer to the latest list.
+  const steps = ['/sessions', '/sessions all', '/switch 1', '/sessions', '/switch 2', '/switch 2', '/new', '你好'];
+  let home, sessionDir;
+  const { root, replies, calls, state } = await runBridge(t, async root => {
+    home = path.join(root, 'claude-home');
+    sessionDir = path.join(root, 'home');
+    await fs.mkdir(sessionDir);
+    await fs.writeFile(path.join(root, 'CLAUDE.md'), '# bridge instructions');
+    const write = async (cwd, id, entries, ageMs) => {
+      const dir = path.join(home, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'));
+      await fs.mkdir(dir, { recursive: true });
+      const file = path.join(dir, `${id}.jsonl`);
+      await fs.writeFile(file, entries.map(e => JSON.stringify(e)).join('\n') + '\n');
+      const time = new Date(Date.now() - ageMs);
+      await fs.utimes(file, time, time);
+    };
+    const project = path.join(root, 'proj');
+    await fs.mkdir(project);
+    await write(project, ids.alpha, [user(project, '重构 alpha'), assistant('好'), { type: 'custom-title', customTitle: 'alpha 项目' }], 60_000);
+    // The chat's own session: made by the bridge (headless) but named, so it is listed with the others.
+    await write(root, ids.own, [user(root, '准备试听课', 'sdk-cli'), assistant('好'), { type: 'custom-title', customTitle: '试听课大纲' }], 120_000);
+    await write(root, ids.script, [user(root, '以前的飞书对话', 'sdk-cli'), assistant('回复')], 86_400_000);
+    return { events: steps.map(content => ({ ...privateEvent, content })), env: { CLAUDE_CONFIG_DIR: home },
+      config: { sessionDir },
+      state: { sessions: { oc_private: { id: ids.own, name: '试听课大纲' } }, seen: [], outbox: [] } };
+  });
+  const text = replies.map(r => r.text);
+  assert(text[0].startsWith('会话（最近活动在前）：\n1. alpha 项目 · '), text[0]);
+  assert(text[0].includes('2. 试听课大纲 · ') && text[0].includes('· 当前'), text[0]);
+  assert(!text[0].includes('workspace 会话：') && !text[0].includes('以前的飞书对话'));
+  assert(text[1].includes('以前的飞书对话') && text[1].includes('· 脚本') && !/试听课大纲[^\n]*脚本/.test(text[1]), text[1]);
+  assert(text[2].includes('已进入会话「alpha 项目」'));
+  assert(/2\. 试听课大纲 · [^\n]*\n/.test(text[3]) && /alpha 项目 · [^\n]*· 当前/.test(text[3]), text[3]);
+  assert.equal(text[4], '已退出会话「alpha 项目」，回到 workspace 会话。');
+  assert.equal(text[5], '当前已经在这个会话中。');
+  // After /new the chat's next session starts in sessionDir, with the bridge instructions passed along.
+  const fresh = calls.find(call => call.input.startsWith('你好'));
+  assert.equal(fresh.cwd, sessionDir);
+  assert.equal(fresh.resumed, null);
+  // Not recorded as sdk-cli, so the terminal /resume picker lists it.
+  assert.equal(fresh.entrypoint, 'agent-connector');
+  assert.equal(fresh.args[fresh.args.indexOf('--append-system-prompt-file') + 1], path.join(root, 'CLAUDE.md'));
+  assert.equal(state.sessions.oc_private.cwd, sessionDir);
 });

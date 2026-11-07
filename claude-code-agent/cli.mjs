@@ -24,7 +24,7 @@ export function findPermissionMode(name) {
   return Object.keys(permissionModes).find(mode => mode.toLowerCase() === value) || null;
 }
 
-export function turnArgs(config, sessionId, { images = [], mode, files = [], cwd, outbox } = {}) {
+export function turnArgs(config, sessionId, { images = [], mode, files = [], cwd, outbox, instructionsFile } = {}) {
   const args = ['-p', '--output-format', 'stream-json', '--verbose',
     '--permission-mode', permissionMode(config, mode), '--permission-prompts', 'none'];
   if (config.claudeAllowedTools?.length) args.push('--allowedTools', config.claudeAllowedTools.join(','));
@@ -32,6 +32,7 @@ export function turnArgs(config, sessionId, { images = [], mode, files = [], cwd
   // Received files and the outbox live in the bridge workspace; a session started elsewhere needs explicit access.
   const outside = [...new Set([...files.map(file => path.dirname(file.path)), ...(outbox ? [outbox] : [])])].filter(dir => !cwd || path.relative(cwd, dir).startsWith('..') || path.isAbsolute(path.relative(cwd, dir)));
   if (outside.length) args.push('--add-dir', ...outside);
+  if (instructionsFile) args.push('--append-system-prompt-file', instructionsFile);
   if (sessionId) args.push('--resume', sessionId);
   return args;
 }
