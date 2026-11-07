@@ -3,14 +3,19 @@
 // the hub and sends the hub's replies back as the bot.
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { eventDecision, messageText, replyArgs } from './protocol.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { eventDecision, messageText, replyArgs, fileReplyArgs } from './protocol.mjs';
+import { withStaging } from './download.mjs';
 import { prepareImages } from './images.mjs';
+import { prepareFiles } from './files.mjs';
 
 export const requiredBins = config => [config.larkBin];
 
 // Lark errors that can never succeed on retry (230011: the original message was withdrawn).
 const PERMANENT_REPLY_ERRORS = new Set([230011]);
-const KINDS = { text: 'text', post: 'rich', image: 'image' };
+// Folders become 'file' so the user is told to zip them instead of getting a generic refusal.
+const KINDS = { text: 'text', post: 'rich', image: 'image', file: 'file', folder: 'file' };
 
 export const formatNote = '[飞书回复格式]\n除非用户本轮另有格式要求：先给结论，短段落之间留空行；简短问题直接回答，不套报告模板。可使用少量加粗、简洁列表、命名链接和带语言标签的代码块；避免多层标题、嵌套列表、长段工具日志和满屏加粗。用户要求文档时，把详细正文写入文档，聊天只给简短结论和文档链接。';
 
@@ -42,6 +47,17 @@ export function createChannel(config, { root, env, log }) {
         error.channel = true;
         reject(error);
       });
+    });
+  }
+
+  // lark-cli uploads only cwd-relative files and refuses anything under /root, so the file is copied
+  // into a private staging dir under the system temp dir and sent from there.
+  async function sendFile(entry) {
+    if (!fs.existsSync(entry.file)) throw Object.assign(new Error('file to send is gone'), { permanent: true });
+    const name = path.basename(entry.file);
+    return withStaging('lark-upload-', async staging => {
+      fs.copyFileSync(entry.file, path.join(staging, name));
+      return runLark(fileReplyArgs(entry, name), 120_000, staging);
     });
   }
 
@@ -84,13 +100,16 @@ export function createChannel(config, { root, env, log }) {
     formatNote,
     start,
     stop() { stopped = true; clearTimeout(restartTimer); listener?.stdin.end(); listener?.kill('SIGTERM'); },
-    send: entry => runLark(replyArgs(entry)),
-    isPermanentSendError: error => PERMANENT_REPLY_ERRORS.has(error.detail?.code),
+    send: entry => (entry.file ? sendFile(entry) : runLark(replyArgs(entry))),
+    isPermanentSendError: error => error.permanent === true || PERMANENT_REPLY_ERRORS.has(error.detail?.code),
+    // Feishu's upload limit: at most 30 MB per file, and no empty files.
+    fileReplies: { maxBytes: 30 * 1024 * 1024 },
     acknowledge: message => runLark(['im', 'reactions', 'create', '--as', 'bot',
       '--params', JSON.stringify({ message_id: message.id }),
       '--data', JSON.stringify({ reaction_type: { emoji_type: 'SaluteFace' } })], 10_000)
       .then(() => log('ack_reaction_added', { messageId: message.id, emojiType: 'SaluteFace' }))
       .catch(error => log('ack_reaction_failed', { messageId: message.id, type: error.detail?.subtype || error.name })),
     attachments: message => prepareImages(message.raw, config, runLark),
+    files: message => prepareFiles(message.raw, config, runLark),
   };
 }

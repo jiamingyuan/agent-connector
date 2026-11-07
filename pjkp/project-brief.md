@@ -33,6 +33,7 @@
 | `/usage` 查询订阅用量 | [V1.0](V1.0/iteration.md) |
 | `/compact`、`/rename`；失败时回复真实原因 | [V1.1](V1.1/iteration.md) |
 | 服务管理：Linux（systemd）、macOS（LaunchAgent）、其他环境内置守护进程；`doctor` 检查 | [Unreleased](Unreleased/iteration.md)，此前只支持 Debian |
+| 接收文件消息（随下一条消息交给 Agent，可读类型见 README）；Agent 存进发件目录的文件随回答发回 | [Unreleased](Unreleased/iteration.md) |
 | 多个授权用户 `ownerOpenIds` | [Unreleased](Unreleased/iteration.md) |
 | MIT 许可证 | [Unreleased](Unreleased/iteration.md) |
 

@@ -2,6 +2,7 @@ runtime/
 config.json
 workspace/CLAUDE.md
 workspace/attachments/
+workspace/outbox/
 .DS_Store
 node_modules/
 .env

@@ -1,4 +1,5 @@
 // Claude Code CLI protocol: arguments, stdin input and stream-json events.
+import path from 'node:path';
 
 // Permission modes selectable in config or with /mode. Turns run with --permission-prompts none,
 // so anything that would ask the user is denied.
@@ -23,11 +24,14 @@ export function findPermissionMode(name) {
   return Object.keys(permissionModes).find(mode => mode.toLowerCase() === value) || null;
 }
 
-export function turnArgs(config, sessionId, { images = [], mode } = {}) {
+export function turnArgs(config, sessionId, { images = [], mode, files = [], cwd, outbox } = {}) {
   const args = ['-p', '--output-format', 'stream-json', '--verbose',
     '--permission-mode', permissionMode(config, mode), '--permission-prompts', 'none'];
   if (config.claudeAllowedTools?.length) args.push('--allowedTools', config.claudeAllowedTools.join(','));
   if (images.length) args.push('--input-format', 'stream-json');
+  // Received files and the outbox live in the bridge workspace; a session started elsewhere needs explicit access.
+  const outside = [...new Set([...files.map(file => path.dirname(file.path)), ...(outbox ? [outbox] : [])])].filter(dir => !cwd || path.relative(cwd, dir).startsWith('..') || path.isAbsolute(path.relative(cwd, dir)));
+  if (outside.length) args.push('--add-dir', ...outside);
   if (sessionId) args.push('--resume', sessionId);
   return args;
 }

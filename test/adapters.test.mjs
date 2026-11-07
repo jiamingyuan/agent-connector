@@ -26,6 +26,7 @@ test('agents expose identity, capabilities and runTurn; optional features are co
     assert.equal(agent.id, id);
     assert.equal(typeof agent.displayName, 'string');
     assert.equal(typeof agent.capabilities.images, 'boolean');
+    assert.equal(typeof agent.capabilities.files, 'boolean');
     assert.equal(typeof agent.runTurn, 'function');
     if (agent.modes) for (const key of ['descriptions', 'resolve', 'find']) assert(agent.modes[key], key);
     if (agent.sessions) for (const key of ['list', 'filter', 'pick', 'running', 'digest', 'format', 'ago', 'resumeHint', 'recap']) assert.equal(typeof agent.sessions[key], 'function', key);
@@ -42,7 +43,7 @@ test('channels expose send, receive and acknowledge, and normalize messages for 
   const module = await loadChannel(base);
   assert.deepEqual(module.requiredBins(base), ['/bin/lark-cli']);
   const channel = module.createChannel({ ...base, replyFormat: 'markdown' }, context);
-  for (const key of ['start', 'stop', 'send', 'isPermanentSendError', 'acknowledge', 'attachments']) assert.equal(typeof channel[key], 'function', key);
+  for (const key of ['start', 'stop', 'send', 'isPermanentSendError', 'acknowledge', 'attachments', 'files']) assert.equal(typeof channel[key], 'function', key);
   assert.equal(channel.id, 'lark');
   assert.equal(channel.richText, true);
   assert(channel.formatNote.startsWith('[飞书回复格式]'));
@@ -50,6 +51,8 @@ test('channels expose send, receive and acknowledge, and normalize messages for 
   assert.equal(channel.isPermanentSendError(new Error('network')), false);
   const event = { message_id: 'om_1', chat_id: 'oc_1', chat_type: 'p2p', message_type: 'post', content: '你好' };
   assert.deepEqual(normalize(event, base), { id: 'om_1', chatId: 'oc_1', chatType: 'private', kind: 'rich', text: '你好', raw: event });
-  assert.equal(normalize({ ...event, chat_type: 'group', message_type: 'file' }, base).kind, 'other');
+  assert.equal(normalize({ ...event, chat_type: 'group', message_type: 'file' }, base).kind, 'file');
+  assert.equal(normalize({ ...event, message_type: 'folder' }, base).kind, 'file');
+  assert.equal(normalize({ ...event, message_type: 'audio' }, base).kind, 'other');
   assert.equal(normalize({ ...event, chat_type: 'group' }, base).chatType, 'group');
 });

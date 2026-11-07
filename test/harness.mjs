@@ -32,7 +32,7 @@ export async function runBridge(t, build) {
     }
     await fs.rm(root, { recursive: true, force: true });
   });
-  const { events, config = {}, state = { sessions: {}, seen: [], outbox: [] }, env = {}, failSummary = [] } = await build(root);
+  const { events, config = {}, state = { sessions: {}, seen: [], outbox: [] }, env = {}, failSummary = [], expectReplies = events.length } = await build(root);
   await copySources(root);
   await fs.mkdir(path.join(root, 'runtime'), { recursive: true });
   await fs.writeFile(path.join(root, 'runtime/state.json'), JSON.stringify(state));
@@ -50,14 +50,22 @@ if(args.includes('consume')){
  },25);
  process.stdin.resume();
 }else{
+ if(args.includes('+messages-reply')&&args.includes('--file')){
+  // Like lark-cli: the file must be cwd-relative and outside /root.
+  const name=args[args.indexOf('--file')+1];
+  if(path.isAbsolute(name)||name.includes('..')||process.cwd().startsWith('/root'))return console.log(JSON.stringify({ok:false,error:{type:'validation',subtype:'invalid_argument'}}));
+  fs.appendFileSync(path.join(root,'replies.jsonl'),JSON.stringify({id:args[args.indexOf('--message-id')+1],format:'file',text:name,cwd:process.cwd(),content:fs.readFileSync(name,'utf8').slice(0,40)})+'\\n');
+  return console.log(JSON.stringify({ok:true,data:{}}));
+ }
  if(args.includes('+messages-reply')){const flag=args.includes('--markdown')?'--markdown':'--text';
   fs.appendFileSync(path.join(root,'replies.jsonl'),JSON.stringify({id:args[args.indexOf('--message-id')+1],format:flag.slice(2),text:args[args.indexOf(flag)+1]})+'\\n');}
  if(args.includes('+messages-resources-download')){
   // Like lark-cli 1.0.98: relative --output under the working directory, absolute saved_path, refuses /root.
   if(process.cwd().startsWith('/root'))return console.log(JSON.stringify({ok:false,error:{type:'validation',subtype:'invalid_argument',message:'protected by the built-in denylist'}}));
-  const saved=path.join(process.cwd(),args[args.indexOf('--output')+1]+'.png');
-  fs.writeFileSync(saved,Buffer.from([137,80,78,71,13,10,26,10,0,0,0,0]));
-  fs.appendFileSync(path.join(root,'downloads.jsonl'),JSON.stringify({key:args[args.indexOf('--file-key')+1],cwd:process.cwd()})+'\\n');
+  const type=args[args.indexOf('--type')+1],key=args[args.indexOf('--file-key')+1];
+  const saved=path.join(process.cwd(),args[args.indexOf('--output')+1]+(type==='file'?'.bin':'.png'));
+  fs.writeFileSync(saved,type==='file'?Buffer.from('content of '+key):Buffer.from([137,80,78,71,13,10,26,10,0,0,0,0]));
+  fs.appendFileSync(path.join(root,'downloads.jsonl'),JSON.stringify({key,type,cwd:process.cwd()})+'\\n');
   return console.log(JSON.stringify({ok:true,data:{saved_path:saved,size_bytes:12}}));
  }
  console.log(JSON.stringify({ok:true,data:{}}));
@@ -90,6 +98,13 @@ process.stdin.on('data',x=>input+=x);process.stdin.on('end',()=>{
  let images=0,text=input;
  if(args.includes('--input-format')){const m=JSON.parse(input).message;images=m.content.filter(b=>b.type==='image').length;text=m.content.find(b=>b.type==='text').text;}
  fs.appendFileSync(path.join(root,'calls.jsonl'),JSON.stringify({args,resumed,summary,mode,cwd:process.cwd(),input:text,images})+'\\n');
+ const outbox=(/\\[桥接回传文件\\]\\n[^\\n]*?请保存到这个目录：([^\\n]+?)。本轮结束后/.exec(text)||[])[1];
+ if(outbox&&text.startsWith('MAKE-FILES')){
+  fs.writeFileSync(path.join(outbox,'report.md'),'# report');fs.writeFileSync(path.join(outbox,'empty.txt'),'');
+  fs.writeFileSync(path.join(outbox,'big.bin'),'');fs.truncateSync(path.join(outbox,'big.bin'),31*1024*1024);
+  fs.symlinkSync('/etc/hostname',path.join(outbox,'link'));
+ }
+ if(outbox&&text.startsWith('MAKE-SIX'))for(let i=1;i<=6;i++)fs.writeFileSync(path.join(outbox,'f'+i+'.txt'),'file '+i);
  if(text.startsWith('LIMIT-ME')){
   console.log(JSON.stringify({type:'system',subtype:'init',session_id:session}));
   console.log(JSON.stringify({type:'assistant',error:'rate_limit',session_id:session,message:{role:'assistant',content:[{type:'text',text:"You've hit your 5-hour limit · resets 5am (UTC)"}]}}));
@@ -117,12 +132,13 @@ process.stdin.on('data',x=>input+=x);process.stdin.on('end',()=>{
   const until = Date.now() + 15_000;
   while (Date.now() < until) {
     replies = await readLines('replies.jsonl');
-    if (replies.length >= events.length) break;
+    if (replies.length >= expectReplies) break;
     if (child.exitCode !== null) assert.fail(diagnostic);
     await new Promise(resolve => setTimeout(resolve, 50));
   }
-  assert.equal(replies.length, events.length, diagnostic);
-  assert.deepEqual(replies.map(r => r.id), events.map((_, index) => `om_step_${index}`));
+  assert.equal(replies.length, expectReplies, diagnostic);
+  // One reply per event, in order, unless the test expects extra replies (such as files sent back).
+  if (expectReplies === events.length) assert.deepEqual(replies.map(r => r.id), events.map((_, index) => `om_step_${index}`));
   // Split each reply into its header line (session name and mode) and the body.
   replies = replies.map(reply => {
     const match = /^(\*\*[^\n]*\*\*(?: -- [^\n]*)?|【[^\n]*】(?: -- [^\n]*)?)\n([\s\S]*)$/.exec(reply.text);

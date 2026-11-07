@@ -16,7 +16,7 @@ export function createAgent(config, { log }) {
   return {
     id: 'example',
     displayName: 'Example',
-    capabilities: { images: false },
+    capabilities: { images: false, files: false },
 
     runTurn({ sessionId, cwd, text, timeoutMs, onSession }) {
       let timer, settle;

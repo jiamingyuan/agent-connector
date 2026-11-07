@@ -26,7 +26,8 @@ export function createAgent(config, { env, runtime }) {
   return {
     id: 'codex',
     displayName: 'Codex',
-    capabilities: { images: false },
+    // Received files are saved in the workspace, which Codex can read; not verified with a real Codex.
+    capabilities: { images: false, files: true },
     runTurn({ sessionId, text, timeoutMs, onSession, turnKey }) {
       // Codex writes its final answer to a file instead of the event stream.
       const outputFile = path.join(runtime, `${turnKey}.txt`);

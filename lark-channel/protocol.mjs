@@ -38,6 +38,11 @@ export function messageText(event, config) {
   return text;
 }
 
+// A file reply: lark-cli uploads the cwd-relative file, then replies with it.
+export function fileReplyArgs(entry, name) {
+  return ['im', '+messages-reply', '--as', 'bot', '--message-id', entry.messageId, '--file', name, '--idempotency-key', entry.key];
+}
+
 export function replyArgs(entry) {
   return ['im', '+messages-reply', '--as', 'bot', '--message-id', entry.messageId,
     entry.format === 'markdown' ? '--markdown' : '--text', entry.text, '--idempotency-key', entry.key];

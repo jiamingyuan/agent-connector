@@ -5,6 +5,7 @@
 - 只处理配置中指定用户（owner，可配置多人）的消息：默认只收私聊，可选择允许他们在群聊中真实 @机器人。
 - 每个聊天有独立的 Agent 会话，通过会话 ID 续接上下文；私聊、各个群互不读取。同一聊天的消息串行执行，按消息 ID 去重；没发出去的回复存在本地，自动重试。
 - 开始处理时在原消息上加一个敬礼表情。Claude Code 支持图片和图文消息（每条最多 4 张，单张 5 MiB、合计 6 MiB 以内，JPEG/PNG/GIF/WebP），支持飞书 Markdown 富文本回复；Codex 目前只收文字。
+- 可以发文件（PDF、文本、表格、文档等，单个最多 50 MiB），Agent 也能把改好或生成的文件发回来，见[文件](#文件)；语音、视频消息暂不支持。
 
 ## 指令
 
@@ -29,6 +30,37 @@
 - Claude 返回错误时（例如订阅额度用完），回复里会给出原因；额度用完时会提示用 `/usage` 查看重置时间。
 - 不以这些指令开头的文字、图片都会交给 Agent。一条消息不超过 40,000 字；同时排队超过 20 条时会请你稍后再发。
 - 当前 Agent 不支持的指令（例如 Codex 下的 `/mode`）会回复说明，不会转给 Agent。
+
+## 文件
+
+私聊里直接发文件即可，单个最多 50 MiB。机器人先回复“已收到文件……”，文件存到本机工作区的 `attachments/`。接着发一条消息说明要怎么处理，文件会随这条消息一起交给 Agent，由它用自己的工具读取。
+
+- 可以连发几个文件再一起说明，最多保留 10 个；`/status` 会显示待处理的文件数。
+- 交付的那一轮失败（例如订阅额度用完）时，文件会保留到下一条消息。
+- 进入其他会话（`/switch`）后也能用：Claude Code 会被授予读取附件目录的权限（`--add-dir`）。
+- 文件夹请先压缩成 zip；语音消息、视频消息（不是以文件形式发送的）暂不支持。
+
+### 发回文件
+
+需要给你文件时（例如改好的幻灯片、生成的报告），Agent 把文件存到本轮专用的发件目录，回答发出后桥接程序再把文件逐个回复给你。每轮开始时提示里会写明这个目录，不用你指定。
+
+- 每个文件最多 30 MB（飞书的上传上限），空文件不发；每次回答最多发 5 个，多出的、超限的会在回复里说明，并留在本机工作区的 `outbox/`。
+- 只发普通文件，不发文件夹和链接；发送失败会和文字回复一样重试，发出后本机副本即删除。
+- 只在这一轮成功完成后才发送；进入其他会话（`/switch`）后同样可用。
+
+### 能读取哪些文件
+
+各类文件能否读取（2026-11-06 用 Claude Code 2.1.318 实测，标注“未实测”的除外）：
+
+| 文件 | 能否读取 | 说明 |
+| --- | --- | --- |
+| 纯文本类：txt、md、csv、json、日志、源代码等 | 可以 | Read 工具直接读取，任何权限模式都可以 |
+| PDF | 可以 | Read 工具直接读取文字和页面 |
+| 图片文件：PNG、JPEG、GIF、WebP | 可以 | Read 工具直接查看 |
+| Word（.docx）、Excel（.xlsx）、zip | 通常可以 | Agent 要执行 `unzip` 一类的命令解开读取，需要权限模式允许执行命令（默认的 `auto` 可以，`plan`、`dontAsk` 下可能被拒），本机需装有 `unzip` |
+| PowerPoint（.pptx） | 可以 | 实测读出每页标题、要点和表格，并按要求改文字、加列表项、改表格单元格后另存，原文件不变；同样需要允许执行命令的权限模式 |
+| 旧版 Office（.doc、.xls、.ppt）及其他二进制格式 | 一般不行（未实测） | 本机没有对应的解析工具 |
+| 音频、视频文件 | 不能理解内容 | 只能拿到文件本身，没有转写和抽帧 |
 
 ## 权限模式
 
@@ -89,17 +121,19 @@ lark-channel/     ◀──回复──  core/     ◀──最终回答──  
   isPermanentSendError(error),
   acknowledge(message),       // 表示已开始处理，不得抛错
   attachments(message),       // Agent 支持图片时下载：[{ path, mediaType, data }]
+  files(message),             // 文件消息：下载并返回 [{ path, name, size }]
+  fileReplies: { maxBytes },  // 能把文件作为回复发回时提供；send(entry) 会收到带 file 的条目
 }
 // 统一消息格式
-{ id, chatId, chatType: 'private' | 'group', kind: 'text' | 'rich' | 'image' | 'other', text, raw }
+{ id, chatId, chatType: 'private' | 'group', kind: 'text' | 'rich' | 'image' | 'file' | 'other', text, raw }
 ```
 
 **Agent 接口**：运行一轮对话并返回答案；可选能力存在时，中枢自动启用对应指令。
 
 ```js
 {
-  id, displayName, capabilities: { images },
-  runTurn({ sessionId, cwd, text, images, mode, timeoutMs, turnKey, onSession }),  // → { cancel(), result }
+  id, displayName, capabilities: { images, files },
+  runTurn({ sessionId, cwd, text, images, files, outbox, mode, timeoutMs, turnKey, onSession }),  // → { cancel(), result }
   modes,               // 可选，启用 /mode
   usage, usageLabel,   // 可选，启用 /usage
   compact,             // 可选，启用 /compact

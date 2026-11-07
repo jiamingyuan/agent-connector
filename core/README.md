@@ -49,7 +49,7 @@ export function createAgent(config, context) {
   return {
     id: 'foo',                       // 与登记名一致
     displayName: 'Foo',              // 用于回复，如“Agent：Foo”“Foo 本轮运行失败”
-    capabilities: { images: false }, // true 时中枢会下载图片并通过 images 传入
+    capabilities: { images: false, files: false }, // images：中枢下载图片并通过 images 传入；files：接收文件消息并通过 files 传入
     runTurn(request) { return { cancel() {}, result: Promise.resolve('答案') }; },
     // 可选：modes、usage + usageLabel、sessions（见下文）
   };
@@ -68,6 +68,8 @@ export function createAgent(config, context) {
 | `images` | array | `capabilities.images` 为 true 且消息带图时为 `[{ path, mediaType, data }]`（本地文件路径、MIME 类型、base64 内容），否则为 `[]`。 |
 | `mode` | string \| undefined | 这个聊天用 `/mode` 选的模式；`undefined` 表示用默认值。没有 `modes` 的 Agent 忽略。 |
 | `timeoutMs` | number | 本轮最长运行时间（`config.turnTimeoutMs`）。Agent 必须自己在超时后停止。 |
+| `files` | array | 用户在这条消息之前发来、随本轮交付的文件 `[{ path, name, size }]`（`capabilities.files` 为 false 时始终为 `[]`）。中枢已在 `text` 里写明文件名和本地路径；Agent 要保证能读到这些路径，例如 Claude Code 在会话目录之外时加 `--add-dir`。 |
+| `outbox` | string \| undefined | 本轮发件目录，渠道支持发回文件且 `capabilities.files` 为 true 时提供。中枢已在 `text` 里告诉模型把要发给用户的文件存到这里；本轮成功后，中枢把目录里的普通文件（每个不超过渠道的 `fileReplies.maxBytes`，最多 5 个）作为回复发出。Agent 要保证能写这个目录，例如 Claude Code 在会话目录之外时加 `--add-dir`。 |
 | `turnKey` | string | 本条消息唯一、可安全用作文件名的键，例如 Codex 用它命名答案文件。 |
 | `onSession(id)` | function | 一旦知道会话 ID 就调用（可以多次）。中枢保存后，下一轮作为 `sessionId` 传回；不调用则每轮都是新会话。 |
 
@@ -152,7 +154,8 @@ export function createChannel(config, context) {
     formatNote: '[Foo回复格式]\n…', // richText 时附在每轮输入末尾的回复格式要求
     start(handlers), stop(),
     send(entry), isPermanentSendError(error),
-    acknowledge(message), attachments(message),
+    acknowledge(message), attachments(message), files(message),
+    fileReplies: { maxBytes },  // 可选：能把文件作为回复发回时提供
   };
 }
 ```
@@ -172,7 +175,7 @@ export function createChannel(config, context) {
 | `id` | 平台消息 ID，全局唯一；中枢用它去重，也用它生成回复的幂等键。 |
 | `chatId` | 聊天 ID，同一私聊或群始终相同；会话、权限模式、排队都按它区分。 |
 | `chatType` | `'private'` 或 `'group'`。群聊回复对全群可见，中枢会限制部分指令。 |
-| `kind` | `'text'` 纯文字、`'rich'` 富文本（可能含图）、`'image'` 纯图片、`'other'` 其他（中枢回复“目前支持文字对话”）。 |
+| `kind` | `'text'` 纯文字、`'rich'` 富文本（可能含图）、`'image'` 纯图片、`'file'` 文件（含文件夹，由渠道决定是否拒绝）、`'other'` 其他（中枢回复“目前支持文字对话”）。 |
 | `text` | 用户文字，已去掉开头的 @机器人。中枢只把已知指令（`/new`、`/status` 等）当作指令，其余文字都交给 Agent。 |
 | `raw` | 平台原始事件，留给渠道自己后续使用（如下载图片），中枢不读取。 |
 
@@ -187,7 +190,8 @@ export function createChannel(config, context) {
 | `text` | 要发的文字，已拆分：每段不超过 12,000 字节，Markdown 尽量按段落、表格和代码块拆。 |
 | `format` | `'markdown'` 或 `'text'`。只有 `richText` 为 true 时才会出现 `'markdown'`。 |
 | `key` | 稳定的幂等键（同一回复重试时不变），平台支持时用于去重。 |
-| `kind` | 回复类别（`answer`、`status`、`error` 等），只用于日志。 |
+| `kind` | 回复类别（`answer`、`status`、`error`、`file` 等），只用于日志。 |
+| `file`、`name` | 仅文件回复：要发送的本地文件路径和文件名。没有 `text`。发送成功后中枢删除该文件；文件已不存在时抛出带 `permanent: true` 的错误，中枢会丢弃这一条。 |
 
 - `send` 成功时 resolve；失败时 reject，错误上设 `channel: true`，`detail` 放平台错误详情。
 - `isPermanentSendError(error)`：重试也不会成功时返回 true（例如原消息已撤回），中枢会丢弃该条回复。
@@ -196,6 +200,7 @@ export function createChannel(config, context) {
 
 - `acknowledge(message)`：表示“已开始处理”，例如加表情或已读回执；返回 Promise 且**不得拒绝**（失败自己记日志）。没有对应能力就返回 `Promise.resolve()`。
 - `attachments(message)`：仅当 Agent 支持图片且 `kind` 为 `'image'` 或 `'rich'` 时调用，返回 `[{ path, mediaType, data }]`（没有图返回 `[]`）。文件建议存在 `config.workspace` 下的私有目录（平台工具不允许写入该目录时，先下载到 `os.tmpdir()` 下用 `mkdtemp` 建的私有目录，检查后再复制，参考 `lark-channel/images.mjs`）；遇到不支持的格式或超限时抛出带用户可读 `message` 的错误，中枢会原样回复。
+- `files(message)`：仅当 Agent 的 `capabilities.files` 为 true 且 `kind` 为 `'file'` 时调用，返回 `[{ path, name, size }]`：本地路径、处理过的安全文件名（单个路径分量）、字节数。下载方式与 `attachments` 相同（参考 `lark-channel/files.mjs`），超限、文件夹等情况抛出带用户可读 `message` 的错误。中枢收到后先回复“已收到文件”，把文件留到这个聊天的下一条普通消息再交给 Agent（文件和文字在飞书里是分开的两条消息）；那一轮成功后才清除，失败或被 `/stop` 时保留。
 
 ## 测试
 

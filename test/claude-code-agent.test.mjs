@@ -108,3 +108,18 @@ test('/rename resumes the exact session and resolves to the name Claude Code rep
   assert.equal(parseRenameEvent({ ...done, result: 'Renamed.' }, '想要的名字').text, '想要的名字');
   assert.equal(parseRenameEvent({ ...done, is_error: true, result: 'failed' }, 'x').text, undefined);
 });
+test('received files outside the session directory are opened up with --add-dir', () => {
+  const files = [{ path: '/ws/attachments/k1/a.pdf' }, { path: '/ws/attachments/k1/b.txt' }];
+  const elsewhere = turnArgs(config, 's1', { files, cwd: '/srv/project' });
+  assert.deepEqual(elsewhere.slice(elsewhere.indexOf('--add-dir'), elsewhere.indexOf('--add-dir') + 2), ['--add-dir', '/ws/attachments/k1']);
+  assert.equal(elsewhere.filter(arg => arg === '/ws/attachments/k1').length, 1);
+  assert.deepEqual(elsewhere.slice(-2), ['--resume', 's1']);
+  assert(!turnArgs(config, 's1', { files, cwd: '/ws' }).includes('--add-dir'));
+  assert(!turnArgs(config, 's1', { cwd: '/srv/project' }).includes('--add-dir'));
+});
+test('the outbox is opened up with --add-dir when the session runs elsewhere', () => {
+  const args = turnArgs(config, 's1', { cwd: '/srv/project', outbox: '/ws/outbox/k2' });
+  assert.deepEqual(args.slice(args.indexOf('--add-dir'), args.indexOf('--add-dir') + 2), ['--add-dir', '/ws/outbox/k2']);
+  assert.deepEqual(args.slice(-2), ['--resume', 's1']);
+  assert(!turnArgs(config, 's1', { cwd: '/ws', outbox: '/ws/outbox/k2' }).includes('--add-dir'));
+});

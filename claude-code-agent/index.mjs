@@ -18,9 +18,9 @@ export function createAgent(config, { env }) {
   return {
     id: 'claude-code',
     displayName,
-    capabilities: { images: true },
-    runTurn: ({ sessionId, cwd, text, images = [], mode, timeoutMs, onSession }) =>
-      run(turnArgs(config, sessionId, { images, mode }), turnInput(text, images), cwd, timeoutMs, onSession),
+    capabilities: { images: true, files: true },
+    runTurn: ({ sessionId, cwd, text, images = [], files = [], outbox, mode, timeoutMs, onSession }) =>
+      run(turnArgs(config, sessionId, { images, mode, files, cwd, outbox }), turnInput(text, images), cwd, timeoutMs, onSession),
     modes: {
       descriptions: permissionModes,
       resolve: override => permissionMode(config, override),
