@@ -1,6 +1,6 @@
 # agent-connector 项目入口
 
-当前状态（2026-11-07）：V1.2 已提交、打标签并推送到 `main`（核对提交见 [V1.2](V1.2/iteration.md)）。飞书机器人 Sophia 以 Claude Code 在本机长期运行，运行环境见[架构](architecture.md)。用户验收未进行。
+当前状态（2026-11-07）：V1.2 已提交（`d164721`）、打标签并推送到 `main`。飞书机器人 Sophia 以 Claude Code 在本机长期运行，运行环境见[架构](architecture.md)。用户验收未进行。
 
 下一步：用户在终端确认机器人开的新会话出现在 `/resume` 列表；真实飞书收发文件、试用 `/delete`；发回超过 30 MB 的文件的方式待用户决定。
 
