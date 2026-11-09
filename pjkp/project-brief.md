@@ -1,6 +1,6 @@
 # agent-connector 项目简介
 
-记录：2026-11-07，对应 [V1.2](V1.2/iteration.md)。功能、配置、命令和部署细节以 [README](../README.md) 为准；各项的用户原话、决定状态与验证见对应版本记录。
+记录：2026-11-09，对应 [V1.2](V1.2/iteration.md)。功能、配置、命令和部署细节以 [README](../README.md) 为准；各项的用户原话、决定状态与验证见对应版本记录。
 
 ## 项目介绍
 
@@ -34,7 +34,7 @@
 | `/usage` 查询订阅用量 | [V1.0](V1.0/iteration.md) |
 | `/compact`、`/rename`；失败时回复真实原因 | [V1.1](V1.1/iteration.md) |
 | 服务管理：Linux（systemd）、macOS（LaunchAgent）、其他环境内置守护进程；`doctor` 检查 | [V1.2](V1.2/iteration.md)，此前只支持 Debian |
-| 接收文件消息（随下一条消息交给 Agent，可读类型见 README）；Agent 存进发件目录的文件随回答发回 | [V1.2](V1.2/iteration.md) |
+| 接收文件消息（随下一条消息交给 Agent，可读类型见 README）；Agent 存进发件目录的文件随回答发回，超过 30 MB 的经云空间发链接（受租户单文件上限约束） | [V1.2](V1.2/iteration.md) |
 | 多个授权用户 `ownerOpenIds` | [V1.2](V1.2/iteration.md) |
 | MIT 许可证 | [V1.2](V1.2/iteration.md) |
 
@@ -42,7 +42,7 @@
 
 | 名称 | 当前含义 |
 | --- | --- |
-| workspace 会话 | 默认会话：桥接程序为每个聊天创建并续接的 Claude Code 会话；V1.2 起新会话在 `sessionDir`（默认运行用户主目录）中创建，较早的仍在 `config.workspace` 中续接 |
+| 默认会话（原称 workspace 会话） | 桥接程序为每个聊天创建并续接的 Claude Code 会话；V1.2 起新会话在 `sessionDir`（默认运行用户主目录）中创建，较早的仍在 `config.workspace` 中续接 |
 | 选择的会话 | 用 `/switch` 进入的本机其他 Claude Code 会话，例如终端里开的会话；在该会话自己的目录中用 `--resume` 续接 |
 | 前情梗概 | 进入会话时发送的摘要，在原会话的临时分支上生成，不写入任何会话记录 |
 | 渠道（channel） | 消息接收端，如飞书；目录 `<名称>-channel/` |

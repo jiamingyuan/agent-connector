@@ -69,7 +69,7 @@ export function createAgent(config, context) {
 | `mode` | string \| undefined | 这个聊天用 `/mode` 选的模式；`undefined` 表示用默认值。没有 `modes` 的 Agent 忽略。 |
 | `timeoutMs` | number | 本轮最长运行时间（`config.turnTimeoutMs`）。Agent 必须自己在超时后停止。 |
 | `files` | array | 用户在这条消息之前发来、随本轮交付的文件 `[{ path, name, size }]`（`capabilities.files` 为 false 时始终为 `[]`）。中枢已在 `text` 里写明文件名和本地路径；Agent 要保证能读到这些路径，例如 Claude Code 在会话目录之外时加 `--add-dir`。 |
-| `outbox` | string \| undefined | 本轮发件目录，渠道支持发回文件且 `capabilities.files` 为 true 时提供。中枢已在 `text` 里告诉模型把要发给用户的文件存到这里；本轮成功后，中枢把目录里的普通文件（每个不超过渠道的 `fileReplies.maxBytes`，最多 5 个）作为回复发出。Agent 要保证能写这个目录，例如 Claude Code 在会话目录之外时加 `--add-dir`。 |
+| `outbox` | string \| undefined | 本轮发件目录，渠道支持发回文件且 `capabilities.files` 为 true 时提供。中枢已在 `text` 里告诉模型把要发给用户的文件存到这里；本轮成功后，中枢把目录里的普通文件（每个不超过渠道的 `fileReplies.linkMaxBytes`，没有时为 `maxBytes`；最多 5 个）作为回复发出。Agent 要保证能写这个目录，例如 Claude Code 在会话目录之外时加 `--add-dir`。 |
 | `instructionsFile` | string \| undefined | 默认会话不在 `config.workspace` 中运行时，指向 `workspace/CLAUDE.md`；Agent 应把它作为附加指令（Claude Code 用 `--append-system-prompt-file`）。 |
 | `turnKey` | string | 本条消息唯一、可安全用作文件名的键，例如 Codex 用它命名答案文件。 |
 | `onSession(id)` | function | 一旦知道会话 ID 就调用（可以多次）。中枢保存后，下一轮作为 `sessionId` 传回；不调用则每轮都是新会话。 |
@@ -157,7 +157,7 @@ export function createChannel(config, context) {
     start(handlers), stop(),
     send(entry), isPermanentSendError(error),
     acknowledge(message), attachments(message), files(message),
-    fileReplies: { maxBytes },  // 可选：能把文件作为回复发回时提供
+    fileReplies: { maxBytes, linkMaxBytes },  // 可选：能把文件作为回复发回时提供；linkMaxBytes 可选，渠道能把超过 maxBytes 的文件改为链接发出时提供，send 自行处理
   };
 }
 ```
@@ -177,6 +177,7 @@ export function createChannel(config, context) {
 | `id` | 平台消息 ID，全局唯一；中枢用它去重，也用它生成回复的幂等键。 |
 | `chatId` | 聊天 ID，同一私聊或群始终相同；会话、权限模式、排队都按它区分。 |
 | `chatType` | `'private'` 或 `'group'`。群聊回复对全群可见，中枢会限制部分指令。 |
+| `userId` | 发送者 ID（可选）。中枢原样带到发回文件的回复条目上，供渠道给该用户开通链接的访问权限。 |
 | `kind` | `'text'` 纯文字、`'rich'` 富文本（可能含图）、`'image'` 纯图片、`'file'` 文件（含文件夹，由渠道决定是否拒绝）、`'other'` 其他（中枢回复“目前支持文字对话”）。 |
 | `text` | 用户文字，已去掉开头的 @机器人。中枢只把已知指令（`/new`、`/status` 等）当作指令，其余文字都交给 Agent。 |
 | `raw` | 平台原始事件，留给渠道自己后续使用（如下载图片），中枢不读取。 |

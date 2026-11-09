@@ -86,6 +86,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
         }
         blocked.add(entry.messageId);
         firstError ||= error;
+        save(); // keeps what the channel noted on the entry, such as an uploaded file's link
         continue;
       }
       drop(entry);
@@ -108,7 +109,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
     let mode;
     if (agent.modes) { try { mode = agent.modes.resolve(state.modes[chatId]); } catch { /* invalid config: no note */ } }
     if (!attached && !mode) return {};
-    const label = attached?.name || state.sessions[chatId]?.name || 'workspace';
+    const label = attached?.name || state.sessions[chatId]?.name || '新会话';
     return { label, note: mode ? `${agent.modes.privateOnly?.includes(mode) ? '⚠️ ' : ''}${mode} mode` : '' };
   }
   function reply(message, text, kind = 'answer') {
@@ -159,7 +160,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
     }
     if (outbox) {
       text = `${text || ''}\n\n[桥接回传文件]\n要发给用户的文件（例如改好的文档、生成的报告）请保存到这个目录：${outbox}。`
-        + `本轮结束后，目录里的文件会作为附件发到${where}（每个最多 ${sizeText(channel.fileReplies.maxBytes)}，最多 ${OUTGOING_FILES_LIMIT} 个，空文件不发）。`
+        + `本轮结束后，目录里的文件会作为附件发到${where}（${fileReplyLimits()}，最多 ${OUTGOING_FILES_LIMIT} 个，空文件不发）。`
         + '临时脚本和中间文件请放到系统临时目录，不要留在工作目录里。';
     }
     if (message.chatType === 'group') {
@@ -200,7 +201,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
     if (!agent.compact) return reply(message, `上下文压缩目前不支持 ${agentName}。`, 'compact');
     const target = chatTarget(message.chatId);
     if (!target.id) return reply(message, '当前会话还没有上下文，不需要压缩。', 'compact');
-    const problem = target.kind === 'attached' && attachedProblem(target);
+    const problem = target.kind === 'attached' && attachedProblem(target, message.chatId);
     if (problem) return reply(message, problem, 'blocked');
     try {
       await channel.acknowledge(message);
@@ -241,7 +242,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
     if (!agent.rename) return reply(message, `会话重命名目前不支持 ${agentName}。`, 'rename');
     const target = chatTarget(message.chatId);
     if (!target.id) return reply(message, '当前会话还没有上下文，先发一条消息再重命名。', 'rename');
-    const problem = target.kind === 'attached' && attachedProblem(target);
+    const problem = target.kind === 'attached' && attachedProblem(target, message.chatId);
     if (problem) return reply(message, problem, 'blocked');
     const name = requested.replace(/\s+/g, ' ').trim().slice(0, 80);
     try {
@@ -257,7 +258,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
       else if (target.kind === 'workspace' && state.sessions[message.chatId]?.id === target.id) state.sessions[message.chatId].name = label;
       save();
       log('session_renamed', { chatId: message.chatId, messageId: message.id });
-      return reply(message, `已将${target.kind === 'workspace' ? ' workspace ' : ''}会话重命名为「${label}」${name ? '' : '（根据对话内容自动生成）'}。`
+      return reply(message, `已将${target.kind === 'workspace' ? '这个聊天的默认' : ''}会话重命名为「${label}」${name ? '' : '（根据对话内容自动生成）'}。`
         + (target.kind === 'workspace' ? '回复首行和 /status 里会显示这个名字。' : '/sessions 列表和终端的会话列表里也会显示新名字。'), 'rename');
     } catch (error) {
       log('rename_error', { messageId: message.id, type: error.code || error.name });
@@ -302,6 +303,11 @@ export function createHub({ config, agent, channel, runtime, log }) {
     fs.chmodSync(dir, 0o700);
     return dir;
   }
+  const sendLimit = () => channel.fileReplies.linkMaxBytes || channel.fileReplies.maxBytes;
+  function fileReplyLimits() {
+    const { maxBytes, linkMaxBytes } = channel.fileReplies;
+    return linkMaxBytes ? `超过 ${sizeText(maxBytes)} 的改为上传后发链接，每个最多 ${sizeText(linkMaxBytes)}` : `每个最多 ${sizeText(maxBytes)}`;
+  }
   function removeIfEmpty(dir) {
     try { fs.rmdirSync(dir); } catch { /* not empty, or already gone */ }
   }
@@ -316,9 +322,9 @@ export function createHub({ config, agent, channel, runtime, log }) {
       if (!item.isFile()) { notes.push(`「${name}」不是普通文件（文件夹或链接），没有发送。`); continue; }
       const size = fs.statSync(file).size;
       if (!size) { notes.push(`「${name}」是空文件，没有发送。`); continue; }
-      if (size > channel.fileReplies.maxBytes) { notes.push(`「${name}」（${sizeText(size)}）超过 ${sizeText(channel.fileReplies.maxBytes)}，没有发送，留在本机工作区的 outbox 目录。`); continue; }
+      if (size > sendLimit()) { notes.push(`「${name}」（${sizeText(size)}）超过 ${sizeText(sendLimit())}，没有发送，留在本机工作区的 outbox 目录。`); continue; }
       if (queued >= OUTGOING_FILES_LIMIT) { notes.push(`「${name}」超出每次最多 ${OUTGOING_FILES_LIMIT} 个文件，没有发送，留在本机工作区的 outbox 目录。`); continue; }
-      state.outbox.push({ messageId: message.id, chatId: message.chatId, file, name: item.name, kind: 'file',
+      state.outbox.push({ messageId: message.id, chatId: message.chatId, userId: message.userId, file, name: item.name, kind: 'file',
         key: replyKey(message.id, 'file', queued++), createdAt: Date.now() });
     }
     if (queued) { save(); log('files_queued', { messageId: message.id, count: queued }); }
@@ -343,9 +349,6 @@ export function createHub({ config, agent, channel, runtime, log }) {
     if (message.chatType !== 'private') return '会话切换只能在私聊中使用，以免把其他会话的内容发到群里。';
     return null;
   }
-  // The bridge's own workspace sessions are reached with /exit, so they are not listed.
-  // Every session except this chat's current workspace session, which is pinned as entry 0. Older
-  // workspace sessions are headless, so they appear only with /sessions all or a keyword.
   // One list: the chat's own session sits among all the others, marked as current when in use.
   const catalog = () => sessions.list({ exclude: [] });
   function showSessions(message, query) {
@@ -382,14 +385,14 @@ export function createHub({ config, agent, channel, runtime, log }) {
     const refusal = sessionCommandRefusal(message);
     if (refusal) return reply(message, refusal, 'switch');
     if (!query) return reply(message, '用法：/switch 编号。先发 /sessions 查看列表；也可以写会话 ID 的开头几位或完整会话名。', 'switch');
-    // Entry 0 is this chat's workspace session.
-    if (query.trim() === '0') return state.attached[message.chatId] ? exitSession(message) : reply(message, '当前已经在 workspace 会话中。', 'switch');
+    // Entry 0 (kept from older versions) is this chat's default session.
+    if (query.trim() === '0') return state.attached[message.chatId] ? exitSession(message) : reply(message, `当前已经在${homeLabel(message.chatId)}中。`, 'switch');
     const own = state.sessions[message.chatId]?.id;
     const { session, problem } = findSession(message, query);
     if (problem) return reply(message, problem, 'switch');
     // Picking the chat's own default session from the list is the same as /exit.
     if (session.id === own) return state.attached[message.chatId] ? exitSession(message) : reply(message, '当前已经在这个会话中。', 'switch');
-    if (state.attached[message.chatId]?.id === session.id) return reply(message, `已经在会话「${session.name}」中。发 /exit 回到 workspace 会话。`, 'switch');
+    if (state.attached[message.chatId]?.id === session.id) return reply(message, `已经在会话「${session.name}」中。发 /exit 回到${homeLabel(message.chatId)}。`, 'switch');
     if (!fs.existsSync(session.cwd)) return reply(message, `会话目录 ${session.cwd} 已不存在，无法恢复这个会话。`, 'switch');
     const terminal = sessions.running().get(session.id);
     // Resuming while a terminal is mid-turn would interleave two writers in one transcript.
@@ -414,15 +417,20 @@ export function createHub({ config, agent, channel, runtime, log }) {
       `已进入会话「${session.name}」\n目录：${session.cwd}\n最近活动：${sessions.ago(session.mtimeMs)}`,
       terminal && `注意：这个会话在终端里还开着。${where}里的新对话不会出现在那个终端窗口；回终端继续前，先退出那个窗口，再运行 ${sessions.resumeHint(session.id)}。`,
       `前情梗概：\n${recap}`,
-      '直接发消息即可在这个会话里继续；发 /exit 回到 workspace 会话。',
+      `直接发消息即可在这个会话里继续；发 /exit 回到${homeLabel(message.chatId)}。`,
     ].filter(Boolean).join('\n\n'), 'switch');
+  }
+  // The chat's default session (the one /exit returns to), by name once it has one.
+  function homeLabel(chatId) {
+    const name = state.sessions[chatId]?.name;
+    return name ? `默认会话「${safeLabel(name)}」` : '这个聊天的默认会话';
   }
   function exitSession(message) {
     const current = state.attached[message.chatId];
-    if (!current) return reply(message, '当前已经在 workspace 会话中。', 'exit');
+    if (!current) return reply(message, `当前已经在${homeLabel(message.chatId)}中。`, 'exit');
     delete state.attached[message.chatId]; save(); status();
     log('session_detached', { chatId: message.chatId, messageId: message.id });
-    return reply(message, `已退出会话「${current.name}」，回到 workspace 会话。`, 'exit');
+    return reply(message, `已退出会话「${current.name}」，回到${homeLabel(message.chatId)}。`, 'exit');
   }
   // ---- /delete ----
   // Any listed session can be deleted, the user's terminal ones included, after a confirmation. The
@@ -462,11 +470,11 @@ export function createHub({ config, agent, channel, runtime, log }) {
   }
 
   // Checked before every turn in a selected session.
-  function attachedProblem(target) {
-    if (target.file && !fs.existsSync(target.file)) return `会话「${target.name}」的记录已不存在，无法继续。发 /exit 回到 workspace 会话。`;
-    if (!fs.existsSync(target.cwd)) return `会话目录 ${target.cwd} 已不存在，无法继续。发 /exit 回到 workspace 会话。`;
+  function attachedProblem(target, chatId) {
+    if (target.file && !fs.existsSync(target.file)) return `会话「${target.name}」的记录已不存在，无法继续。发 /exit 回到${homeLabel(chatId)}。`;
+    if (!fs.existsSync(target.cwd)) return `会话目录 ${target.cwd} 已不存在，无法继续。发 /exit 回到${homeLabel(chatId)}。`;
     if (sessions?.running().get(target.id)?.busy) {
-      return '这个会话正在终端里执行任务，这条消息没有发出。等终端任务结束后重发，或发 /exit 回到 workspace 会话。';
+      return `这个会话正在终端里执行任务，这条消息没有发出。等终端任务结束后重发，或发 /exit 回到${homeLabel(chatId)}。`;
     }
     return null;
   }
@@ -513,7 +521,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
     if (agent.compact) lines.push('/compact [要点]：压缩当前会话的上下文，可附上摘要里要保留的重点');
     if (agent.usage) lines.push(`/usage：${agent.usageLabel}`);
     if (sessions) lines.push(`/sessions：列出本机可切换的 ${agentName} 会话（仅私聊；/sessions all 包括脚本会话，/sessions 关键词 筛选）`,
-      '/switch 编号：进入列表中的会话，并收到前情梗概', '/exit：退出当前会话，回到 workspace 会话');
+      '/switch 编号：进入列表中的会话，并收到前情梗概', '/exit：退出当前会话，回到这个聊天的默认会话');
     if (sessions?.trash) lines.push('/delete 编号：删除列表中的会话（需再次确认；终端的 /resume 里也会消失）');
     lines.push('/help：使用说明');
     return lines.join('\n');
@@ -526,8 +534,8 @@ export function createHub({ config, agent, channel, runtime, log }) {
       ...(state.pendingFiles[message.chatId]?.length ? [`待处理文件：${state.pendingFiles[message.chatId].length} 个，会随下一条消息交给 ${agentName}`] : []),
       ...(modes ? [`权限模式：${modeLabel(message.chatId)}`] : []),
       ...(attached
-        ? [`当前会话：${attached.name}（/exit 回到 workspace）`, `会话 ID：${attached.id}`, `会话目录：${attached.cwd}`, `workspace 会话：${workspaceSession}`]
-        : [`当前会话：workspace${state.sessions[message.chatId]?.name ? `（${state.sessions[message.chatId].name}）` : ''}`, `会话：${workspaceSession}`]),
+        ? [`当前会话：${attached.name}（/exit 回到默认会话）`, `会话 ID：${attached.id}`, `会话目录：${attached.cwd}`, `默认会话：${workspaceSession}`]
+        : [`当前会话：${state.sessions[message.chatId]?.name || '新会话（未命名）'}（这个聊天的默认会话）`, `会话 ID：${workspaceSession}`]),
       `工作区：${config.workspace}`].join('\n');
   }
 
@@ -560,7 +568,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
     if (text.length > 40_000) return reply(message, '消息过长，请拆分后发送。', 'limit');
     if (text === '/help') return reply(message, helpText(), 'help');
     const target = chatTarget(message.chatId);
-    const problem = target.kind === 'attached' && attachedProblem(target);
+    const problem = target.kind === 'attached' && attachedProblem(target, message.chatId);
     if (problem) return reply(message, problem, 'blocked');
     try {
       await channel.acknowledge(message);

@@ -28,7 +28,7 @@ test('auto is the default and /mode switches this chat in order, keeping bypass 
   assert.deepEqual(state.modes, {});
   // Every reply carries the mode in effect; the high-risk one is flagged. After the first answer the
   // workspace session has its automatic name.
-  assert.equal(replies[0].head, '**workspace** -- auto mode');
+  assert.equal(replies[0].head, '**新会话** -- auto mode');
   assert.equal(replies[2].head, '**auto-name** -- plan mode');
   assert.equal(replies[4].head, '**auto-name** -- plan mode');
   assert.equal(replies[7].head, '**auto-name** -- ⚠️ bypassPermissions mode');
@@ -39,7 +39,7 @@ test('auto is the default and /mode switches this chat in order, keeping bypass 
 test('/usage answers immediately from Claude Code without a model turn or saved session', { timeout: 20_000 }, async t => {
   const { root, replies, calls } = await runBridge(t, async () => ({ events: [{ ...privateEvent, content: '/usage' }] }));
   assert.equal(replies[0].text, 'Current session: 14% used');
-  assert.equal(replies[0].head, '**workspace** -- auto mode');
+  assert.equal(replies[0].head, '**新会话** -- auto mode');
   assert.equal(calls.length, 0);
   const fs = await import('node:fs/promises');
   const [usage] = (await fs.readFile(root + '/usage.jsonl', 'utf8')).trim().split('\n').map(JSON.parse);

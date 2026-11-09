@@ -32,12 +32,12 @@ export async function runBridge(t, build) {
     }
     await fs.rm(root, { recursive: true, force: true });
   });
-  const { events, config = {}, state = { sessions: {}, seen: [], outbox: [] }, env = {}, failSummary = [], expectReplies = events.length } = await build(root);
+  const { events, config = {}, state = { sessions: {}, seen: [], outbox: [] }, env = {}, failSummary = [], driveDenied = false, expectReplies = events.length } = await build(root);
   await copySources(root);
   await fs.mkdir(path.join(root, 'runtime'), { recursive: true });
   await fs.writeFile(path.join(root, 'runtime/state.json'), JSON.stringify(state));
   await fs.writeFile(path.join(root, 'events.json'), JSON.stringify(events.map((event, index) => ({ message_id: `om_step_${index}`, ...event }))));
-  await fs.writeFile(path.join(root, 'fake.json'), JSON.stringify({ failSummary }));
+  await fs.writeFile(path.join(root, 'fake.json'), JSON.stringify({ failSummary, driveDenied }));
   const fakeLark = path.join(root, 'lark');
   await fs.writeFile(fakeLark, `#!${process.execPath}
 const fs=require('fs'),path=require('path'),root=__dirname,args=process.argv.slice(2);
@@ -59,6 +59,20 @@ if(args.includes('consume')){
  }
  if(args.includes('+messages-reply')){const flag=args.includes('--markdown')?'--markdown':'--text';
   fs.appendFileSync(path.join(root,'replies.jsonl'),JSON.stringify({id:args[args.indexOf('--message-id')+1],format:flag.slice(2),text:args[args.indexOf(flag)+1]})+'\\n');}
+ if(args.includes('+upload')&&args.includes('drive')){
+  // Like lark-cli: cwd-relative file outside /root; the app may lack the Drive scopes.
+  const name=args[args.indexOf('--file')+1];
+  if(path.isAbsolute(name)||process.cwd().startsWith('/root'))return console.log(JSON.stringify({ok:false,error:{type:'validation',subtype:'invalid_argument'}}));
+  const denied=JSON.parse(fs.readFileSync(path.join(root,'fake.json'),'utf8')).driveDenied;
+  if(denied==='size')return console.log(JSON.stringify({ok:false,error:{type:'api',subtype:'quota_exceeded',code:1061043,message:'file size beyond limit.'}}));
+  if(denied)return console.log(JSON.stringify({ok:false,error:{type:'authorization',subtype:'app_scope_not_applied',message:'missing drive:file:upload'}}));
+  fs.appendFileSync(path.join(root,'drive.jsonl'),JSON.stringify({op:'upload',name,size:fs.statSync(name).size,cwd:process.cwd()})+'\\n');
+  return console.log(JSON.stringify({ok:true,data:{file_token:'boxcnfake',file_name:name,url:'https://example.feishu.cn/file/boxcnfake'}}));
+ }
+ if(args.includes('permission.members')){
+  fs.appendFileSync(path.join(root,'drive.jsonl'),JSON.stringify({op:'grant',params:JSON.parse(args[args.indexOf('--params')+1]),data:JSON.parse(args[args.indexOf('--data')+1]),yes:args.includes('--yes')})+'\\n');
+  return console.log(JSON.stringify({ok:true,data:{}}));
+ }
  if(args.includes('+messages-resources-download')){
   // Like lark-cli 1.0.98: relative --output under the working directory, absolute saved_path, refuses /root.
   if(process.cwd().startsWith('/root'))return console.log(JSON.stringify({ok:false,error:{type:'validation',subtype:'invalid_argument',message:'protected by the built-in denylist'}}));
@@ -144,5 +158,5 @@ process.stdin.on('data',x=>input+=x);process.stdin.on('end',()=>{
     const match = /^(\*\*[^\n]*\*\*(?: -- [^\n]*)?|【[^\n]*】(?: -- [^\n]*)?)\n([\s\S]*)$/.exec(reply.text);
     return match ? { ...reply, head: match[1], text: match[2], raw: reply.text } : { ...reply, head: null, raw: reply.text };
   });
-  return { root, replies, calls: await readLines('calls.jsonl'), state: JSON.parse(await fs.readFile(path.join(root, 'runtime/state.json'), 'utf8')) };
+  return { root, replies, calls: await readLines('calls.jsonl'), drive: await readLines('drive.jsonl'), state: JSON.parse(await fs.readFile(path.join(root, 'runtime/state.json'), 'utf8')) };
 }

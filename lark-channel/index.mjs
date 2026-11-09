@@ -9,11 +9,15 @@ import { eventDecision, messageText, replyArgs, fileReplyArgs } from './protocol
 import { withStaging } from './download.mjs';
 import { prepareImages } from './images.mjs';
 import { prepareFiles, maxFileBytes } from './files.mjs';
+import { uploadToDrive, grantAccess } from './drive.mjs';
 
 export const requiredBins = config => [config.larkBin];
 
 // Lark errors that can never succeed on retry (230011: the original message was withdrawn).
 const PERMANENT_REPLY_ERRORS = new Set([230011]);
+// Feishu's chat upload limit is 30 MB; larger files (up to 1 GiB) go through Drive and are sent as a link.
+const CHAT_FILE_BYTES = 30 * 1024 * 1024;
+const DRIVE_FILE_BYTES = 1024 * 1024 * 1024;
 // Folders become 'file' so the user is told to zip them instead of getting a generic refusal.
 const KINDS = { text: 'text', post: 'rich', image: 'image', file: 'file', folder: 'file' };
 
@@ -22,7 +26,7 @@ export const formatNote = '[飞书回复格式]\n除非用户本轮另有格式�
 // The hub's channel-neutral view of one Lark message; raw keeps the event for Lark-only work.
 export function normalize(event, config) {
   return { id: event.message_id, chatId: event.chat_id, chatType: event.chat_type === 'p2p' ? 'private' : 'group',
-    kind: KINDS[event.message_type] || 'other', text: messageText(event, config), raw: event };
+    userId: event.sender_id, kind: KINDS[event.message_type] || 'other', text: messageText(event, config), raw: event };
 }
 
 export function createChannel(config, { root, env, log }) {
@@ -54,6 +58,22 @@ export function createChannel(config, { root, env, log }) {
   // into a private staging dir under the system temp dir and sent from there.
   async function sendFile(entry) {
     if (!fs.existsSync(entry.file)) throw Object.assign(new Error('file to send is gone'), { permanent: true });
+    if (fs.statSync(entry.file).size > CHAT_FILE_BYTES) {
+      // Progress is kept on the entry, so a retry does not upload the file again.
+      try {
+        if (!entry.link) Object.assign(entry, await uploadToDrive(runLark, entry.file)).link = entry.url;
+        if (entry.userId && !entry.granted) { await grantAccess(runLark, entry.token, entry.userId); entry.granted = true; }
+      } catch (error) {
+        // Missing app scopes, or a file over the tenant's Drive size limit (1061043; 20 MB on the
+        // tenant tested 2026-11-07), will not fix themselves: say so once and keep the file here.
+        const reason = error.detail?.type === 'authorization' ? `机器人缺少权限（${error.detail.message || error.detail.subtype}）`
+          : error.detail?.code === 1061043 ? '飞书云空间拒绝了这个大小的文件（超出租户的单文件上传上限）' : null;
+        if (!reason) throw error;
+        await runLark(replyArgs({ ...entry, format: 'text', text: `「${entry.name}」超过 30 MB，需要上传到飞书云空间再发链接，但${reason}。文件留在本机：${entry.file}` }));
+        throw Object.assign(new Error('Drive upload refused'), { permanent: true });
+      }
+      return runLark(replyArgs({ ...entry, format: 'text', text: `「${entry.name}」超过 30 MB，已上传到飞书云空间：${entry.link}` }));
+    }
     const name = path.basename(entry.file);
     return withStaging('lark-upload-', async staging => {
       fs.copyFileSync(entry.file, path.join(staging, name));
@@ -102,8 +122,8 @@ export function createChannel(config, { root, env, log }) {
     stop() { stopped = true; clearTimeout(restartTimer); listener?.stdin.end(); listener?.kill('SIGTERM'); },
     send: entry => (entry.file ? sendFile(entry) : runLark(replyArgs(entry))),
     isPermanentSendError: error => error.permanent === true || PERMANENT_REPLY_ERRORS.has(error.detail?.code),
-    // Feishu's upload limit: at most 30 MB per file, and no empty files.
-    fileReplies: { maxBytes: 30 * 1024 * 1024 },
+    // Up to 30 MB as a file reply (Feishu's limit, no empty files); larger ones as a Drive link.
+    fileReplies: { maxBytes: CHAT_FILE_BYTES, linkMaxBytes: DRIVE_FILE_BYTES },
     acknowledge: message => runLark(['im', 'reactions', 'create', '--as', 'bot',
       '--params', JSON.stringify({ message_id: message.id }),
       '--data', JSON.stringify({ reaction_type: { emoji_type: 'SaluteFace' } })], 10_000)

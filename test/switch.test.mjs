@@ -36,7 +36,7 @@ test('owner lists, enters and leaves local Claude Code sessions from a private c
   });
   const [list, busy, entered, answer, statusReply, exited, workspace, fallback, exitedAgain] = replies;
 
-  assert.equal(list.head, '**workspace** -- auto mode');
+  assert.equal(list.head, '**新会话** -- auto mode');
   assert.match(list.text, /1\. alpha 项目 · .*proj · 1 分钟前\n2\. 终端长任务 · .* · 终端执行中/);
   assert(!list.text.includes('脚本任务') && !list.text.includes('飞书 workspace'));
   assert.match(busy.text, /正在终端里执行任务/);
@@ -47,10 +47,10 @@ test('owner lists, enters and leaves local Claude Code sessions from a private c
   assert(entered.text.includes('前情梗概：\n- 目标：重构 alpha'));
   assert(!entered.text.includes('终端里还开着'));
   assert.deepEqual([answer.head, answer.format, answer.text], ['**alpha 项目** -- auto mode', 'markdown', 'answer in proj']);
-  assert(statusReply.head === '**alpha 项目** -- auto mode' && statusReply.text.includes('当前会话：alpha 项目') && statusReply.text.includes('workspace 会话：ws-session'));
+  assert(statusReply.head === '**alpha 项目** -- auto mode' && statusReply.text.includes('当前会话：alpha 项目') && statusReply.text.includes('默认会话：ws-session'));
   // After /exit the header already names the workspace session.
-  assert.deepEqual([exited.head, exited.text], ['**workspace** -- auto mode', '已退出会话「alpha 项目」，回到 workspace 会话。']);
-  assert.deepEqual([workspace.head, workspace.text], ['**workspace** -- auto mode', `answer in ${path.basename(root)}`]);
+  assert.deepEqual([exited.head, exited.text], ['**新会话** -- auto mode', '已退出会话「alpha 项目」，回到这个聊天的默认会话。']);
+  assert.deepEqual([workspace.head, workspace.text], ['**新会话** -- auto mode', `answer in ${path.basename(root)}`]);
   assert.equal(fallback.head, '**脚本任务** -- auto mode');
   assert(fallback.text.startsWith('已进入会话「脚本任务」'), fallback.text);
   assert(fallback.text.includes('自动梗概生成失败') && fallback.text.includes('最近的提问：脚本任务') && fallback.text.includes('最近的回复：脚本完成'));
@@ -106,7 +106,7 @@ test('one list: the chat session sits among the others; after /new the next one 
   assert(text[1].includes('以前的飞书对话') && text[1].includes('· 脚本') && !/试听课大纲[^\n]*脚本/.test(text[1]), text[1]);
   assert(text[2].includes('已进入会话「alpha 项目」'));
   assert(/2\. 试听课大纲 · [^\n]*\n/.test(text[3]) && /alpha 项目 · [^\n]*· 当前/.test(text[3]), text[3]);
-  assert.equal(text[4], '已退出会话「alpha 项目」，回到 workspace 会话。');
+  assert.equal(text[4], '已退出会话「alpha 项目」，回到默认会话「试听课大纲」。');
   assert.equal(text[5], '当前已经在这个会话中。');
   // After /new the chat's next session starts in sessionDir, with the bridge instructions passed along.
   const fresh = calls.find(call => call.input.startsWith('你好'));

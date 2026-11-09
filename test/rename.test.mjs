@@ -12,10 +12,10 @@ test('/rename names the workspace session, generates a name when none is given, 
   const { root, replies, state } = await runBridge(t, async () => ({ events: steps.map(content => ({ ...privateEvent, content })) }));
   const text = replies.map(r => r.text);
   assert.equal(text[0], '当前会话还没有上下文，先发一条消息再重命名。');
-  assert.equal(text[2], '已将 workspace 会话重命名为「飞书 助手」。回复首行和 /status 里会显示这个名字。');
-  assert(text[3].includes('当前会话：workspace（飞书 助手）'), text[3]);
-  assert.equal(text[4], '已将 workspace 会话重命名为「auto-name」（根据对话内容自动生成）。回复首行和 /status 里会显示这个名字。');
-  assert(text[6].includes('当前会话：workspace（auto-name）'), text[6]);
+  assert.equal(text[2], '已将这个聊天的默认会话重命名为「飞书 助手」。回复首行和 /status 里会显示这个名字。');
+  assert(text[3].includes('当前会话：飞书 助手（这个聊天的默认会话）'), text[3]);
+  assert.equal(text[4], '已将这个聊天的默认会话重命名为「auto-name」（根据对话内容自动生成）。回复首行和 /status 里会显示这个名字。');
+  assert(text[6].includes('当前会话：auto-name（这个聊天的默认会话）'), text[6]);
   const session = state.sessions.oc_private.id;
   const renames = await readLines(path.join(root, 'renames.jsonl'));
   // The first is the automatic name after the first answer.

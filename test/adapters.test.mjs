@@ -49,8 +49,8 @@ test('channels expose send, receive and acknowledge, and normalize messages for 
   assert(channel.formatNote.startsWith('[飞书回复格式]'));
   assert.equal(channel.isPermanentSendError({ detail: { code: 230011 } }), true);
   assert.equal(channel.isPermanentSendError(new Error('network')), false);
-  const event = { message_id: 'om_1', chat_id: 'oc_1', chat_type: 'p2p', message_type: 'post', content: '你好' };
-  assert.deepEqual(normalize(event, base), { id: 'om_1', chatId: 'oc_1', chatType: 'private', kind: 'rich', text: '你好', raw: event });
+  const event = { message_id: 'om_1', chat_id: 'oc_1', sender_id: 'ou_1', chat_type: 'p2p', message_type: 'post', content: '你好' };
+  assert.deepEqual(normalize(event, base), { id: 'om_1', chatId: 'oc_1', chatType: 'private', userId: 'ou_1', kind: 'rich', text: '你好', raw: event });
   assert.equal(normalize({ ...event, chat_type: 'group', message_type: 'file' }, base).kind, 'file');
   assert.equal(normalize({ ...event, message_type: 'folder' }, base).kind, 'file');
   assert.equal(normalize({ ...event, message_type: 'audio' }, base).kind, 'other');
