@@ -93,7 +93,7 @@ process.stdin.on('data',x=>input+=x);process.stdin.on('end',()=>{
   assert.match(replies.find(r => r.id === 'om_timeout').text, /任务超过 1 分钟已停止/);
   assert(!replies.find(r => r.id === 'om_timeout').text.includes('15 分钟'));
   assert.match(replies.find(r => r.id === 'om_stop').text, /已请求停止当前任务/);
-  // Leave out the automatic /rename that names each new workspace session after its first answer.
+  // Leave out the automatic /rename that names each new session after its first answer.
   const calls = (await readLines('calls.jsonl')).filter(c => !c.input.startsWith('/rename'));
   assert.equal(calls.length, 6);
   assert(!calls.some(c => c.input.includes('must-not-run')));

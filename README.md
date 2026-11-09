@@ -18,12 +18,11 @@
 | `/stop` | 停止当前任务，并清空这个聊天里排队的消息；已执行的操作不会撤销，会话上下文保留 | 立即 | 全部 |
 | `/new` | 开启新会话：在 `sessionDir`（默认是主目录，与终端里的 Claude Code 会话同处）新建，不再放进本项目的 `workspace/`；如果在其他会话里，先退出 | 排队 | 全部 |
 | `/mode [模式名]` | 不带参数时查看当前权限模式和全部选项，带参数时切换（见[权限模式](#权限模式)） | 排队 | Claude Code |
-| `/rename [名称]` | 重命名当前会话（这个聊天的默认会话或 `/switch` 进入的会话）；不写名称时根据对话内容自动生成。进入的会话改名后，回复首行的会话名、`/sessions` 列表和终端的会话列表都会用新名字；默认会话的名字显示在回复首行和 `/status`。调用 Claude Code 自带的 `/rename` | 排队 | Claude Code |
-| `/compact [要点]` | 压缩当前会话的上下文（这个聊天的默认会话或 `/switch` 进入的会话），回复压缩前后的 token 数；会话 ID 不变，之后的消息基于压缩后的摘要继续。可附上摘要里要保留的重点，如 `/compact 保留 newdash 的设计决定`。调用 Claude Code 自带的 `/compact` | 排队 | Claude Code |
+| `/rename [名称]` | 重命名当前会话；不写名称时根据对话内容自动生成。改名后，回复首行的会话名、`/sessions` 列表和终端的会话列表都会用新名字。调用 Claude Code 自带的 `/rename` | 排队 | Claude Code |
+| `/compact [要点]` | 压缩当前会话的上下文，回复压缩前后的 token 数；会话 ID 不变，之后的消息基于压缩后的摘要继续。可附上摘要里要保留的重点，如 `/compact 保留 newdash 的设计决定`。调用 Claude Code 自带的 `/compact` | 排队 | Claude Code |
 | `/usage` | 查询 Claude 订阅用量：当前会话窗口和本周的用量百分比与重置时间。调用本机 Claude Code 自带的 `/usage`，不消耗模型调用，也不保存会话 | 立即 | Claude Code |
 | `/sessions [all \| 关键词]` | 列出本机可切换的会话（见[切换会话](#切换会话)） | 立即 | Claude Code，仅私聊 |
-| `/switch 编号` | 进入列表中的会话，先收到前情梗概；也可写会话 ID 开头几位或完整会话名。选中这个聊天自己的会话等同于 `/exit` | 排队 | Claude Code，仅私聊 |
-| `/exit` | 退出当前会话，回到这个聊天的默认会话 | 排队 | Claude Code，仅私聊 |
+| `/switch 编号` | 切换到列表中的任一会话，先收到前情梗概；也可写会话 ID 开头几位或完整会话名 | 排队 | Claude Code，仅私聊 |
 | `/delete 编号` | 删除列表中的会话（终端开的也可以）：先回复会话信息，10 分钟内发 `/delete 编号 确认` 才删除。会话记录和同名文件夹移到 `runtime/trash/`（附 `restore.json` 说明移回哪里），之后 `/sessions` 和终端的 `/resume` 都不再显示。不能删当前所在的会话、终端里开着的会话和正在执行任务的会话；用过它的聊天下一条消息开新会话 | 排队 | Claude Code，仅私聊 |
 
 - **立即**：马上回复，不等正在运行的任务。**排队**：和普通消息按发送顺序执行，排在它前面的消息不受影响。
@@ -84,11 +83,11 @@ Claude Code 默认使用 `auto` 模式。`config.json` 的 `claudePermissionMode
 
 ## 切换会话
 
-每个聊天有一个自己的默认会话：`/new` 之后在 `sessionDir`（默认主目录）里新建，和终端里开的会话放在同一处；更早创建的会话仍在本项目的 `workspace/` 里续接。也可以进入本机其他 Claude Code 会话，例如终端里开过的项目会话，从手机接着用。
+会话之间没有主次：每个聊天只有一个“当前会话”。`/new` 在 `sessionDir`（默认主目录）里开一个新会话，和终端里开的会话放在同一处；`/switch` 切换到本机任一 Claude Code 会话，包括机器人开的、终端里开的项目会话，切走的会话仍在列表里，随时可以切回。更早版本创建的会话仍在本项目的 `workspace/` 里续接。
 
 - `/sessions` 把这个聊天自己的会话和其他会话放在同一个列表里，按最近活动排序，显示会话名、目录、最近活动，并标注“当前”“终端打开中 / 终端执行中”。默认列出终端或 IDE 里开启的会话和已命名的会话（桥接程序创建的会话第一次回答后会自动起名）；`/sessions all` 还会列出未命名的 `claude -p` 脚本会话，`/sessions 关键词` 按名称、目录或 ID 筛选。
 - 会话名依次取 `/rename` 设置的名称、Claude Code 自动生成的标题、第一条提问。
-- 机器人发出的每条消息首行都是当前会话名和权限模式，例如 `**agent-connector** -- auto mode`，换行后是回复内容；纯文本回复格式下写成 `【会话名】 -- auto mode`。workspace 会话第一次回答后会自动起名（调用 Claude Code 自带的 `/rename`，根据对话生成，每个会话只起一次），之前显示为 `workspace`；用 `/rename` 可以随时改。
+- 机器人发出的每条消息首行都是当前会话名和权限模式，例如 `**agent-connector** -- auto mode`，换行后是回复内容；纯文本回复格式下写成 `【会话名】 -- auto mode`。新会话第一次回答后会自动起名（调用 Claude Code 自带的 `/rename`，根据对话生成，每个会话只起一次），之前显示为“新会话”；用 `/rename` 可以随时改。
 - 前情梗概在原会话的临时分支上生成（`--fork-session --no-session-persistence`，不带工具和 MCP），不写入任何会话记录；生成失败时改发最近一轮提问和回复的摘录。
 - 之后的消息用 `--resume` 续接原会话，并在会话自己的目录中运行，所以对话会写进这个会话的记录，之后在终端用 `claude --resume <会话 ID>` 打开即可接上。权限按这个聊天当前的权限模式和 `claudeAllowedTools`，读取的是该项目自己的 `CLAUDE.md` 和设置。
 - 会话正在终端执行任务时，不能切换进入，也不会执行发来的消息，以免两个进程同时写同一会话。终端只是打开着（空闲）时可以进入，但新对话不会出现在那个终端窗口：回终端继续前，先退出那个窗口，再用 `claude --resume` 重新打开。
@@ -141,7 +140,7 @@ lark-channel/     ◀──回复──  core/     ◀──最终回答──  
   usage, usageLabel,   // 可选，启用 /usage
   compact,             // 可选，启用 /compact
   rename,              // 可选，启用 /rename
-  sessions,            // 可选，启用 /sessions、/switch、/exit（提供 trash 时还有 /delete）
+  sessions,            // 可选，启用 /sessions、/switch（提供 trash 时还有 /delete）
 }
 ```
 
@@ -179,7 +178,7 @@ cp config.example.json config.json          # 或 Codex
 | `larkBin` / `claudeBin` / `codexBin` | 对应可执行文件路径，只需填写所选模块用到的。 |
 | `workspace` | Agent 的工作区绝对路径；收到的图片保存在其中的 `attachments/`。 |
 | `maxFileBytes` | 收文件的单个大小上限（字节），省略时为 100 MiB。发回文件不受此项影响（30 MB 以内直接发，更大的经云空间发链接，最多 1 GiB）。 |
-| `sessionDir` | 聊天默认会话 `/new` 后新建时的工作目录，省略时为运行用户的主目录，会话记录因此与终端里的会话放在一起。会话在此目录之外运行时，`workspace/CLAUDE.md` 会作为附加系统提示传给 Claude Code。 |
+| `sessionDir` | 新会话的工作目录，省略时为运行用户的主目录，会话记录因此与终端里的会话放在一起。会话在此目录之外运行时，`workspace/CLAUDE.md` 会作为附加系统提示传给 Claude Code。 |
 | `maxEventAgeMs` | 接受消息的最大年龄，单位毫秒。 |
 | `turnTimeoutMs` | 单条任务的最长运行时间，单位毫秒；前情梗概最多 5 分钟。 |
 | `allowGroupMentions` / `botOpenId` | 群聊默认关闭；开启时须提供本机器人正确的 open ID，并在飞书启用相应事件权限。 |

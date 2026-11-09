@@ -34,7 +34,7 @@ test('/delete moves a listed session to the trash after confirmation, and refuse
     await fs.writeFile(path.join(home, 'sessions', `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: ids.open, status: 'idle' }));
     return { events: steps.map(content => ({ ...privateEvent, content })), env: { CLAUDE_CONFIG_DIR: home },
       state: { sessions: { oc_private: { id: ids.own, cwd: root }, oc_other: { id: ids.alpha, cwd: project } },
-        attached: { oc_third: { id: ids.alpha, cwd: project, name: 'alpha 项目' } }, seen: [], outbox: [] } };
+        attached: { oc_third: { id: ids.alpha, cwd: project, name: 'alpha 项目' } }, seen: [], outbox: [] } }; // attached: the old format, merged on load
   });
   const text = replies.map(r => r.text);
   assert(/1\. alpha 项目[^\n]*\n2\. 终端会话[^\n]*\n3\. 试听课大纲/.test(text[0]), text[0]);
@@ -54,6 +54,6 @@ test('/delete moves a listed session to the trash after confirmation, and refuse
   assert.deepEqual([restore.id, restore.restoreTo], [ids.alpha, folder]);
   // Chats that used the deleted session start fresh; the others keep theirs.
   assert.deepEqual(Object.keys(state.sessions), ['oc_private']);
-  assert.deepEqual(state.attached, {});
+  assert.equal(state.attached, undefined);
   assert.deepEqual(state.pendingDeletes, {});
 });

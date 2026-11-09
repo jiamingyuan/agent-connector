@@ -63,14 +63,14 @@ export function createAgent(config, context) {
 | 参数 | 类型 | 含义 |
 | --- | --- | --- |
 | `sessionId` | string \| undefined | 要续接的会话 ID；这个聊天第一轮或 `/new` 之后为 `undefined`，此时新建会话。 |
-| `cwd` | string | 本轮的工作目录：聊天默认会话为 `config.sessionDir`（默认主目录；早先创建的会话为 `config.workspace`），用 `/switch` 进入其他会话后是那个会话的目录。只支持固定目录的 Agent 可以忽略。 |
+| `cwd` | string | 本轮的工作目录：当前会话自己的目录；新会话为 `config.sessionDir`（默认主目录；早先版本创建的会话为 `config.workspace`）。只支持固定目录的 Agent 可以忽略。 |
 | `text` | string | 发给 Agent 的完整文字。中枢已在用户原文后附加以 `\n\n[桥接` 开头的说明块（群聊范围、当前工作目录、渠道的回复格式要求），原样送入即可。 |
 | `images` | array | `capabilities.images` 为 true 且消息带图时为 `[{ path, mediaType, data }]`（本地文件路径、MIME 类型、base64 内容），否则为 `[]`。 |
 | `mode` | string \| undefined | 这个聊天用 `/mode` 选的模式；`undefined` 表示用默认值。没有 `modes` 的 Agent 忽略。 |
 | `timeoutMs` | number | 本轮最长运行时间（`config.turnTimeoutMs`）。Agent 必须自己在超时后停止。 |
 | `files` | array | 用户在这条消息之前发来、随本轮交付的文件 `[{ path, name, size }]`（`capabilities.files` 为 false 时始终为 `[]`）。中枢已在 `text` 里写明文件名和本地路径；Agent 要保证能读到这些路径，例如 Claude Code 在会话目录之外时加 `--add-dir`。 |
 | `outbox` | string \| undefined | 本轮发件目录，渠道支持发回文件且 `capabilities.files` 为 true 时提供。中枢已在 `text` 里告诉模型把要发给用户的文件存到这里；本轮成功后，中枢把目录里的普通文件（每个不超过渠道的 `fileReplies.linkMaxBytes`，没有时为 `maxBytes`；最多 5 个）作为回复发出。Agent 要保证能写这个目录，例如 Claude Code 在会话目录之外时加 `--add-dir`。 |
-| `instructionsFile` | string \| undefined | 默认会话不在 `config.workspace` 中运行时，指向 `workspace/CLAUDE.md`；Agent 应把它作为附加指令（Claude Code 用 `--append-system-prompt-file`）。 |
+| `instructionsFile` | string \| undefined | 会话不在 `config.workspace` 中运行时，指向 `workspace/CLAUDE.md`；Agent 应把它作为附加指令（Claude Code 用 `--append-system-prompt-file`）。 |
 | `turnKey` | string | 本条消息唯一、可安全用作文件名的键，例如 Codex 用它命名答案文件。 |
 | `onSession(id)` | function | 一旦知道会话 ID 就调用（可以多次）。中枢保存后，下一轮作为 `sessionId` 传回；不调用则每轮都是新会话。 |
 
@@ -113,11 +113,11 @@ runTurn: ({ sessionId, cwd, text, timeoutMs, onSession }) => runCliTurn({
 
 **`usage()` 和 `usageLabel`** → `/usage`：`usage()` 返回 `Promise<string>`（直接发给用户的文字），`usageLabel` 是 `/help` 里的说明。失败时中枢回复通用提示。
 
-**`rename({ sessionId, cwd, name, timeoutMs })`** → `/rename [名称]`：给这个会话改名，返回 `{ cancel, result }`，`result` 解析为改名后的名称（`name` 为空字符串时由 Agent 自动生成）。中枢只在聊天已有会话时调用；成功后用新名称更新进入会话的回复标题，workspace 会话的名称显示在 `/status`。会话 ID 应保持不变，不要调用 `onSession`。
+**`rename({ sessionId, cwd, name, timeoutMs })`** → `/rename [名称]`：给这个会话改名，返回 `{ cancel, result }`，`result` 解析为改名后的名称（`name` 为空字符串时由 Agent 自动生成）。中枢只在聊天已有会话时调用；成功后用新名称更新回复首行和 `/status`。会话 ID 应保持不变，不要调用 `onSession`。
 
 **`compact({ sessionId, cwd, instructions, timeoutMs })`** → `/compact [要点]`：压缩这个会话的上下文，返回与 `runTurn` 相同的 `{ cancel, result }`，`result` 解析为发给用户的结果说明（如压缩前后的 token 数）。`instructions` 是用户附的要点，可能为空字符串。中枢只在聊天已有会话时调用，按排队顺序执行；会话 ID 应保持不变，不要调用 `onSession`。
 
-**`sessions`** → `/sessions`、`/switch`、`/exit`（只在私聊可用）。会话对象：
+**`sessions`** → `/sessions`、`/switch`（只在私聊可用）。会话对象：
 
 ```js
 { id, name, cwd, mtimeMs, headless, file }

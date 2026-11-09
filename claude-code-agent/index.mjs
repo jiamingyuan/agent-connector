@@ -1,6 +1,6 @@
 // Agent adapter: local Claude Code CLI. Implements the agent interface in core/README.md, plus the
 // optional features modes (/mode), usage (/usage), compact (/compact), rename (/rename) and sessions
-// (/sessions, /switch, /exit, /delete).
+// (/sessions, /switch, /delete).
 import path from 'node:path';
 import { runCliTurn, runCliQuery } from '../core/cli-turn.mjs';
 import { permissionModes, permissionMode, findPermissionMode, turnArgs, recapArgs, usageArgs, recapPrompt, turnInput,

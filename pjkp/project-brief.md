@@ -28,7 +28,7 @@
 | --- | --- |
 | 每个聊天独立会话，串行执行、去重、回复失败重试；`/new`、`/status`、`/stop`、`/help`；Claude Code 收图片、Markdown 回复 | 首次导入起；图片适配 `lark-cli` 1.0.98 见 [V1.1](V1.1/iteration.md) |
 | 渠道与 Agent 模块化、接入指南、`example-agent/` 模板 | [V1.0](V1.0/iteration.md) |
-| 可选会话 `/sessions`、`/switch`、`/exit`，进入时发前情梗概 | [V1.0](V1.0/iteration.md)；单一列表见 [V1.2](V1.2/iteration.md) |
+| 可选会话 `/sessions`、`/switch`，进入时发前情梗概（`/exit` 已取消，见 [Unreleased](Unreleased/iteration.md)） | [V1.0](V1.0/iteration.md)；单一列表见 [V1.2](V1.2/iteration.md) |
 | 新会话放在 Claude Code 默认位置并可在终端 `/resume` 找到；自动起名；`/delete` 删除会话（移到回收目录） | [V1.2](V1.2/iteration.md) |
 | 默认权限模式 `auto`，`/mode` 按聊天切换；每条回复首行显示会话名与模式 | [V1.0](V1.0/iteration.md)；首行显示见 [V1.2](V1.2/iteration.md) |
 | `/usage` 查询订阅用量 | [V1.0](V1.0/iteration.md) |
@@ -42,8 +42,7 @@
 
 | 名称 | 当前含义 |
 | --- | --- |
-| 默认会话（原称 workspace 会话） | 桥接程序为每个聊天创建并续接的 Claude Code 会话；V1.2 起新会话在 `sessionDir`（默认运行用户主目录）中创建，较早的仍在 `config.workspace` 中续接 |
-| 选择的会话 | 用 `/switch` 进入的本机其他 Claude Code 会话，例如终端里开的会话；在该会话自己的目录中用 `--resume` 续接 |
+| 当前会话 | 每个聊天正在用的 Claude Code 会话；`/new` 新建（在 `sessionDir`，默认运行用户主目录），`/switch` 换成本机任一会话，各会话不分主次（见 [Unreleased](Unreleased/iteration.md)；V1.2 及以前有“默认会话 / 进入的会话”之分） |
 | 前情梗概 | 进入会话时发送的摘要，在原会话的临时分支上生成，不写入任何会话记录 |
 | 渠道（channel） | 消息接收端，如飞书；目录 `<名称>-channel/` |
 | Agent 适配器（agent） | 运行对话的一端，如 Claude Code、Codex；目录 `<名称>-agent/` |

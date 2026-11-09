@@ -193,6 +193,6 @@ export function formatSessionList(shown, { total = shown.length, running = new M
     }
     if (total > shown.length) lines.push(`另有 ${total - shown.length} 个更早的会话，可用 /sessions 关键词 筛选。`);
   }
-  lines.push('', '发送 /switch 编号 进入会话，/exit 回到这个聊天的默认会话；/sessions all 还会列出未命名的脚本（claude -p）会话。');
+  lines.push('', '发送 /switch 编号 切换会话，/new 开新会话；/sessions all 还会列出未命名的脚本（claude -p）会话。');
   return lines.join('\n');
 }

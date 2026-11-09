@@ -27,7 +27,7 @@ test('auto is the default and /mode switches this chat in order, keeping bypass 
   assert(calls.every(call => call.args[call.args.indexOf('--permission-prompts') + 1] === 'none'));
   assert.deepEqual(state.modes, {});
   // Every reply carries the mode in effect; the high-risk one is flagged. After the first answer the
-  // workspace session has its automatic name.
+  // session has its automatic name.
   assert.equal(replies[0].head, '**新会话** -- auto mode');
   assert.equal(replies[2].head, '**auto-name** -- plan mode');
   assert.equal(replies[4].head, '**auto-name** -- plan mode');

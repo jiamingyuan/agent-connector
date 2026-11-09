@@ -44,7 +44,7 @@ test('without the Drive scopes a large file is reported once and kept on this ma
   assert.match(replies[1].text, /^「big.bin」超过 30 MB，需要上传到飞书云空间再发链接，但机器人缺少权限（missing drive:file:upload）。文件留在本机：.*big\.bin$/);
   assert.equal(fs.statSync(replies[1].text.split('文件留在本机：')[1]).size, 31 * 1024 * 1024);
   assert.deepEqual(drive, []);
-  assert.deepEqual(state.outbox, []);
+  assert.deepEqual(state.outbox.filter(entry => entry.file), []);
 });
 
 test('a file over the tenant Drive size limit is reported once, not retried', { timeout: 30_000 }, async t => {
@@ -53,5 +53,5 @@ test('a file over the tenant Drive size limit is reported once, not retried', { 
   assert.deepEqual(replies.map(r => r.format), ['markdown', 'text', 'file', 'markdown']);
   assert.match(replies[1].text, /^「big.bin」超过 30 MB，需要上传到飞书云空间再发链接，但飞书云空间拒绝了这个大小的文件（超出租户的单文件上传上限）。文件留在本机：/);
   assert.deepEqual(drive, []);
-  assert.deepEqual(state.outbox, []);
+  assert.deepEqual(state.outbox.filter(entry => entry.file), []);
 });

@@ -9,8 +9,8 @@ const ids = { alpha: 'aaaaaaaa-0000-4000-8000-000000000001', script: 'bbbbbbbb-0
 const user = (cwd, content, entrypoint = 'cli') => ({ type: 'user', cwd, entrypoint, message: { role: 'user', content } });
 const assistant = text => ({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] } });
 
-test('owner lists, enters and leaves local Claude Code sessions from a private chat', { timeout: 20_000 }, async t => {
-  const steps = ['/sessions', '/switch 2', '/switch 1', '继续 alpha', '/status', '/exit', '回到 workspace', '/switch bbbbbbbb', '/exit'];
+test('owner lists and moves between local Claude Code sessions; no session is special', { timeout: 20_000 }, async t => {
+  const steps = ['/sessions', '/switch 2', '/switch 1', '继续 alpha', '/status', '/exit', '/switch bbbbbbbb', '/new', '新话题'];
   let project;
   const { root, replies, calls, state } = await runBridge(t, async root => {
     // A fake Claude Code home: a titled terminal session, a scripted one, one busy in a terminal, and the bridge's own.
@@ -34,7 +34,7 @@ test('owner lists, enters and leaves local Claude Code sessions from a private c
     return { events: steps.map(content => ({ ...privateEvent, content })), env: { CLAUDE_CONFIG_DIR: home }, failSummary: ['bbbbbbbb'],
       state: { sessions: { oc_private: { id: 'ws-session' } }, seen: [], outbox: [] } };
   });
-  const [list, busy, entered, answer, statusReply, exited, workspace, fallback, exitedAgain] = replies;
+  const [list, busy, entered, answer, statusReply, exitReply, fallback, fresh, freshAnswer] = replies;
 
   assert.equal(list.head, '**新会话** -- auto mode');
   assert.match(list.text, /1\. alpha 项目 · .*proj · 1 分钟前\n2\. 终端长任务 · .* · 终端执行中/);
@@ -43,33 +43,31 @@ test('owner lists, enters and leaves local Claude Code sessions from a private c
 
   assert.equal(entered.format, 'markdown');
   assert.equal(entered.head, '**alpha 项目** -- auto mode');
-  assert(entered.text.startsWith('已进入会话「alpha 项目」'), entered.text);
+  assert(entered.text.startsWith('已进入会话「alpha 项目」') && entered.text.endsWith('直接发消息即可在这个会话里继续。'), entered.text);
   assert(entered.text.includes('前情梗概：\n- 目标：重构 alpha'));
   assert(!entered.text.includes('终端里还开着'));
   assert.deepEqual([answer.head, answer.format, answer.text], ['**alpha 项目** -- auto mode', 'markdown', 'answer in proj']);
-  assert(statusReply.head === '**alpha 项目** -- auto mode' && statusReply.text.includes('当前会话：alpha 项目') && statusReply.text.includes('默认会话：ws-session'));
-  // After /exit the header already names the workspace session.
-  assert.deepEqual([exited.head, exited.text], ['**新会话** -- auto mode', '已退出会话「alpha 项目」，回到这个聊天的默认会话。']);
-  assert.deepEqual([workspace.head, workspace.text], ['**新会话** -- auto mode', `answer in ${path.basename(root)}`]);
+  assert(statusReply.text.includes('当前会话：alpha 项目\n') && statusReply.text.includes(`会话 ID：${ids.alpha}`) && statusReply.text.includes(`会话目录：${project}`), statusReply.text);
+  assert(exitReply.text.includes('/exit 已取消'), exitReply.text);
   assert.equal(fallback.head, '**脚本任务** -- auto mode');
-  assert(fallback.text.startsWith('已进入会话「脚本任务」'), fallback.text);
   assert(fallback.text.includes('自动梗概生成失败') && fallback.text.includes('最近的提问：脚本任务') && fallback.text.includes('最近的回复：脚本完成'));
-  assert.equal(exitedAgain.head, '**auto-name** -- auto mode', 'the workspace session was named after its first answer');
+  assert.equal(fresh.text, '已离开会话「脚本任务」，它仍在 /sessions 列表中。已开启新会话，下一条消息会创建新的 Claude Code 上下文。');
+  assert.deepEqual([freshAnswer.head, freshAnswer.text], ['**新会话** -- auto mode', `answer in ${path.basename(root)}`]);
 
-  assert.equal(calls.length, 4);
-  const [recap, attachedTurn, workspaceTurn, failedRecap] = calls;
+  const [recap, alphaTurn, failedRecap, freshTurn] = calls.filter(call => !call.input.startsWith('/rename'));
   assert.deepEqual([recap.summary, recap.resumed, recap.cwd], [true, ids.alpha, project]);
   assert(recap.args.includes('--fork-session') && recap.args[recap.args.indexOf('--tools') + 1] === '');
-  assert.deepEqual([attachedTurn.summary, attachedTurn.resumed, attachedTurn.cwd], [false, ids.alpha, project]);
-  assert(attachedTurn.input.startsWith('继续 alpha') && attachedTurn.input.includes('这条消息是用户在飞书里发来的') && attachedTurn.input.includes(`当前工作目录：${project}`));
-  assert.deepEqual([workspaceTurn.resumed, workspaceTurn.cwd], ['ws-session', root]);
-  assert(!workspaceTurn.input.includes('飞书里发来的'));
-  assert(workspaceTurn.input.startsWith('回到 workspace') && workspaceTurn.input.includes(`当前工作目录：${root}`) && workspaceTurn.input.includes('[飞书回复格式]'));
+  assert.deepEqual([alphaTurn.summary, alphaTurn.resumed, alphaTurn.cwd], [false, ids.alpha, project]);
+  // Every session gets the same notes, including where the message came from.
+  assert(alphaTurn.input.startsWith('继续 alpha') && alphaTurn.input.includes('这条消息是用户在飞书里发来的') && alphaTurn.input.includes(`当前工作目录：${project}`));
   assert.deepEqual([failedRecap.summary, failedRecap.resumed], [true, ids.script]);
+  assert.deepEqual([freshTurn.resumed, freshTurn.cwd], [null, root]);
+  assert(freshTurn.input.includes('这条消息是用户在飞书里发来的') && freshTurn.input.includes('[飞书回复格式]'));
 
+  // The old ws-session left no trace once the chat moved on; the fresh session is now the chat's session.
   assert.deepEqual(Object.keys(state.sessions), ['oc_private']);
-  assert.equal(state.sessions.oc_private.id, 'ws-session');
-  assert.deepEqual(state.attached, {});
+  assert.notEqual(state.sessions.oc_private.id, 'ws-session');
+  assert.equal(state.attached, undefined);
 });
 
 test('one list: the chat session sits among the others; after /new the next one starts in sessionDir', { timeout: 20_000 }, async t => {
@@ -106,8 +104,11 @@ test('one list: the chat session sits among the others; after /new the next one 
   assert(text[1].includes('以前的飞书对话') && text[1].includes('· 脚本') && !/试听课大纲[^\n]*脚本/.test(text[1]), text[1]);
   assert(text[2].includes('已进入会话「alpha 项目」'));
   assert(/2\. 试听课大纲 · [^\n]*\n/.test(text[3]) && /alpha 项目 · [^\n]*· 当前/.test(text[3]), text[3]);
-  assert.equal(text[4], '已退出会话「alpha 项目」，回到默认会话「试听课大纲」。');
-  assert.equal(text[5], '当前已经在这个会话中。');
+  // Going back to the session the chat started in works like entering any other one, recap included.
+  assert(text[4].startsWith('已进入会话「试听课大纲」\n目录：'), text[4]);
+  assert(text[4].includes('前情梗概：\n- 目标：重构 alpha') && text[4].endsWith('直接发消息即可在这个会话里继续。'), text[4]);
+  assert(calls.some(call => call.summary && call.resumed === ids.own));
+  assert.equal(text[5], '当前已经在会话「试听课大纲」中。');
   // After /new the chat's next session starts in sessionDir, with the bridge instructions passed along.
   const fresh = calls.find(call => call.input.startsWith('你好'));
   assert.equal(fresh.cwd, sessionDir);
