@@ -12,6 +12,7 @@ const COMPACT_TIMEOUT_MS = 10 * 60_000;
 const RENAME_TIMEOUT_MS = 2 * 60_000;
 const PENDING_FILES_LIMIT = 10;
 const OUTGOING_FILES_LIMIT = 5;
+const RECALL_CHECK_MS = 5000;
 
 export function sizeText(bytes) {
   if (bytes < 1024) return `${bytes} B`;
@@ -50,6 +51,9 @@ export function createHub({ config, agent, channel, runtime, log }) {
   const active = new Map();
   const queues = new Map();
   const generations = new Map();
+  // Messages the hub still has work for (ID -> chat ID), and those among them the user withdrew.
+  const inFlight = new Map();
+  const recalled = new Set();
   let stopping = false, ready = false, processingCount = 0, sending = Promise.resolve();
   const startedAt = new Date().toISOString();
 
@@ -70,7 +74,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
       agent: agent.id, channel: channel.id, agentName, turnTimeoutMs: config.turnTimeoutMs });
   }
   const defaultMode = () => { try { return agent.modes.resolve(); } catch { return 'invalid'; } };
-  const superseded = (message, generation) => stopping || generation !== (generations.get(message.chatId) || 0);
+  const superseded = (message, generation) => stopping || recalled.has(message.id) || generation !== (generations.get(message.chatId) || 0);
   const logReplyError = e => log('reply_error', { type: e.detail?.subtype || e.name });
 
   // ---- replies ----
@@ -128,6 +132,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
       model: stats.model, effort: stats.effort, context: stats.context, quota: state.quota, turn };
   }
   function reply(message, text, kind = 'answer', turn) {
+    if (recalled.has(message.id)) return Promise.resolve();
     let parts, format, card;
     if (channel.cards) {
       format = 'card';
@@ -193,7 +198,8 @@ export function createHub({ config, agent, channel, runtime, log }) {
   }
   // Runs one tracked turn for the chat so /stop and shutdown can cancel it.
   async function track(message, handle, logType) {
-    const job = { handle };
+    // The automatic naming runs after the answer went out, so withdrawing the message no longer stops it.
+    const job = { handle, messageId: logType === 'autoname' ? undefined : message.id };
     active.set(message.chatId, job); status();
     try {
       const text = await handle.result;
@@ -553,6 +559,34 @@ export function createHub({ config, agent, channel, runtime, log }) {
       `工作区：${config.workspace}`].join('\n');
   }
 
+  // ---- withdrawn messages ----
+  // A message the user withdraws gets no further work and no reply: its running turn is cancelled
+  // (what it already did stays done), it is skipped if still queued, and unsent replies are dropped.
+  // Other messages in the chat carry on. A channel reports it with handlers.recalled(id); for one
+  // without such an event the hub asks channel.isRecalled(message) while the message is in flight.
+  function recall(id) {
+    const unsent = state.outbox.length;
+    state.outbox = state.outbox.filter(entry => entry.messageId !== id);
+    if (state.outbox.length !== unsent) { save(); status(); }
+    if (!inFlight.has(id) || recalled.has(id)) return;
+    recalled.add(id);
+    const job = active.get(inFlight.get(id));
+    if (job?.messageId === id) job.handle.cancel();
+    log('message_recalled', { messageId: id, running: job?.messageId === id });
+  }
+  function watchRecall(message) {
+    if (!channel.isRecalled) return () => {};
+    let timer, done = false;
+    const check = async () => {
+      let gone = false;
+      try { gone = await channel.isRecalled(message); } catch { /* unknown: carry on */ }
+      if (done) return;
+      if (gone) recall(message.id); else timer = setTimeout(check, config.recallCheckMs || RECALL_CHECK_MS);
+    };
+    timer = setTimeout(check, config.recallCheckMs || RECALL_CHECK_MS);
+    return () => { done = true; clearTimeout(timer); };
+  }
+
   // ---- message handling ----
   async function handle(message, generation) {
     if (superseded(message, generation)) return;
@@ -608,7 +642,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
         if (left.length) state.pendingFiles[message.chatId] = left; else delete state.pendingFiles[message.chatId];
         save();
       }
-      if (result && !stopping) {
+      if (result && !stopping && !recalled.has(message.id)) {
         await reply(message, result, 'answer', Object.keys(turn).length ? turn : undefined);
         if (outbox) await sendOutbox(message, outbox);
         await autoName(message);
@@ -649,9 +683,14 @@ export function createHub({ config, agent, channel, runtime, log }) {
     }
     processingCount++; status();
     const generation = generations.get(message.chatId) || 0;
+    inFlight.set(message.id, message.chatId);
+    const unwatch = watchRecall(message);
     const promise = (queues.get(message.chatId) || Promise.resolve()).catch(() => {}).then(() => handle(message, generation))
       .catch(error => log('handler_error', { type: error.name }))
-      .finally(() => { processingCount--; if (queues.get(message.chatId) === promise) queues.delete(message.chatId); status(); });
+      .finally(() => {
+        unwatch(); inFlight.delete(message.id); recalled.delete(message.id);
+        processingCount--; if (queues.get(message.chatId) === promise) queues.delete(message.chatId); status();
+      });
     queues.set(message.chatId, promise);
   }
 
@@ -660,6 +699,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
       status();
       channel.start({
         message: receive,
+        recalled: recall,
         ready() { ready = true; status(); flushLater(); },
         closed() { ready = false; status(); },
       });

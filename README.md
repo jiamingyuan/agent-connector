@@ -4,6 +4,7 @@
 
 - 只处理配置中指定用户（owner，可配置多人）的消息：默认只收私聊，可选择允许他们在群聊中真实 @机器人。
 - 每个聊天有独立的 Agent 会话，通过会话 ID 续接上下文；私聊、各个群互不读取。同一聊天的消息串行执行，按消息 ID 去重；没发出去的回复存在本地，自动重试。
+- 撤回一条消息，机器人就停止处理它：正在执行的任务被中断，还在排队的不再执行，也不再回复；已经做完的操作不会撤销，同一聊天里的其他消息照常处理。飞书上最多约 5 秒后生效。
 - 开始处理时在原消息上加一个敬礼表情。Claude Code 支持图片和图文消息（每条最多 4 张，单张 5 MiB、合计 6 MiB 以内，JPEG/PNG/GIF/WebP），支持飞书 Markdown 富文本回复；Codex 目前只收文字。
 - 可以发文件（PDF、文本、表格、文档等，单个最多 100 MiB），Agent 也能把改好或生成的文件发回来，见[文件](#文件)；语音、视频消息暂不支持。
 
@@ -128,7 +129,7 @@ lark-channel/     ◀──回复──  core/     ◀──最终回答──  
 {
   id, displayName,            // displayName 会出现在回复和提示词里，例如“飞书”
   richText, formatNote,       // 是否支持 Markdown；支持时附在每轮输入后的回复格式要求
-  start({ message, ready, closed }), stop(),
+  start({ message, recalled, ready, closed }), stop(),
   send(entry),                // { messageId, chatId, text, format: 'markdown' | 'text', key }
   isPermanentSendError(error),
   acknowledge(message),       // 表示已开始处理，不得抛错
@@ -191,6 +192,7 @@ cp config.example.json config.json          # 或 Codex
 | `sessionDir` | 新会话的工作目录，省略时为运行用户的主目录，会话记录因此与终端里的会话放在一起。会话在此目录之外运行时，`workspace/CLAUDE.md` 会作为附加系统提示传给 Claude Code。 |
 | `maxEventAgeMs` | 接受消息的最大年龄，单位毫秒。 |
 | `turnTimeoutMs` | 单条任务的最长运行时间，单位毫秒；前情梗概最多 5 分钟。 |
+| `recallCheckMs` | 可选，处理一条消息期间每隔多久查一次它是否被撤回，单位毫秒，省略时为 5000；只用于没有撤回事件的渠道（如飞书）。 |
 | `allowGroupMentions` / `botOpenId` | 群聊默认关闭；开启时须提供本机器人正确的 open ID，并在飞书启用相应事件权限。 |
 | `replyFormat` | `card`：飞书卡片（见下）；`markdown`：飞书富文本，首行写会话名和权限模式；其他值为纯文本。 |
 | `claudeEffort` | 可选，Claude Code 的推理深度（如 `high`、`max`），以 `--effort` 传入并显示在卡片的模型标签上；省略时用 Claude Code 的默认值，标签只写模型名。 |

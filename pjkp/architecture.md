@@ -4,8 +4,8 @@
 
 ## 运行环境（本机实例）
 
-- Sophia 运行在一个 Docker 容器内的 Linux 上，没有 systemd，用 `service.mjs` 的内置守护进程，日志在 `runtime/bridge.log`。容器重启后不会自动启动，需执行 `node service.mjs start`。
-- 是否在运行以 `node service.mjs status` 的 Supervisor、Bridge 两行为准：进程被强杀（如容器重启）后，`runtime/status.json` 可能仍写着 `ready: true`。
+- 2026-11-10 起 Sophia 运行在宿主机上（原先在一个 Docker 容器里，那一份已停用；两份共用同一个飞书应用，不能同时运行）。以 systemd 系统服务 `agent-connector` 运行，开机自启；日志用 `node service.mjs logs` 查看，不再写入 `runtime/bridge.log`。
+- 是否在运行以 `node service.mjs status` 为准：进程被强杀或主机重启后，`runtime/status.json` 可能仍写着 `ready: true`。
 - `config.json` 只在本机，不进仓库。
 - 飞书私聊可能用 `/switch` 接在终端正在用的 Claude Code 会话上，飞书那边的 Agent 也会改这个仓库，终端会话看不到这些改动。
 

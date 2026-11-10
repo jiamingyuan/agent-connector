@@ -141,6 +141,10 @@ export function createChannel(config, { root, env, log }) {
       '--data', JSON.stringify({ reaction_type: { emoji_type: 'SaluteFace' } })], 10_000)
       .then(() => log('ack_reaction_added', { messageId: message.id, emojiType: 'SaluteFace' }))
       .catch(error => log('ack_reaction_failed', { messageId: message.id, type: error.detail?.subtype || error.name })),
+    // lark-cli has no event for withdrawn messages, so the hub asks while a message is in flight.
+    // Only the flag is read (--jq), never the message text.
+    isRecalled: message => runLark(['api', 'GET', `/open-apis/im/v1/messages/${message.id}`, '--as', 'bot',
+      '--jq', '{ok, error, data: {deleted: .data.items[0].deleted}}'], 10_000).then(data => data?.deleted === true),
     attachments: message => prepareImages(message.raw, config, runLark),
     files: message => prepareFiles(message.raw, config, runLark),
     incomingFileBytes: maxFileBytes(config),

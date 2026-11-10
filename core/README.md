@@ -159,6 +159,7 @@ export function createChannel(config, context) {
     formatNote: '[Foo回复格式]\n…', // richText 时附在每轮输入末尾的回复格式要求
     start(handlers), stop(),
     send(entry), isPermanentSendError(error),
+    isRecalled(message),            // 可选：平台没有撤回事件时提供，见“撤回的消息”
     acknowledge(message), attachments(message), files(message),
     fileReplies: { maxBytes, linkMaxBytes },  // 可选：能把文件作为回复发回时提供；linkMaxBytes 可选，渠道能把超过 maxBytes 的文件改为链接发出时提供，send 自行处理
   };
@@ -167,7 +168,7 @@ export function createChannel(config, context) {
 
 ### 收消息：start(handlers) 与统一消息
 
-`start({ message, ready, closed })` 开始接收，之后：
+`start({ message, recalled, ready, closed })` 开始接收，之后：
 
 - 每收到一条**需要处理**的消息，调用 `handlers.message(msg)`。过滤由渠道负责：只放行授权用户（`config.ownerOpenId` 之类）、本机器人被真实 @ 的群消息、未过期的消息；被忽略的用 `context.log('event_ignored', { reason })` 记录。
 - 连接可用时调用 `handlers.ready()`：中枢据此显示“连接正常”并补发积压的回复。断开时调用 `handlers.closed()`。断线重连由渠道自己负责，重连成功后再调用 `ready()`。
@@ -184,6 +185,13 @@ export function createChannel(config, context) {
 | `kind` | `'text'` 纯文字、`'rich'` 富文本（可能含图）、`'image'` 纯图片、`'file'` 文件（含文件夹，由渠道决定是否拒绝）、`'other'` 其他（中枢回复“目前支持文字对话”）。 |
 | `text` | 用户文字，已去掉开头的 @机器人。中枢只把已知指令（`/new`、`/status` 等）当作指令，其余文字都交给 Agent。 |
 | `raw` | 平台原始事件，留给渠道自己后续使用（如下载图片），中枢不读取。 |
+
+### 撤回的消息
+
+用户撤回一条消息后，中枢停止处理它：正在运行的那一轮被取消（`cancel()`，已做的操作不撤销），还在排队的跳过，没发出的回复丢弃，也不再回复；同一聊天的其他消息不受影响。渠道用下面任一方式告诉中枢，中枢不认识的 ID 会被忽略：
+
+- 平台有撤回事件：收到后调用 `handlers.recalled(id)`，`id` 即那条消息的 `id`。
+- 平台没有撤回事件：提供 `isRecalled(message)`，返回 `Promise<boolean>`。中枢从收到消息到处理完为止，每隔 `config.recallCheckMs`（默认 5 秒）问一次；拒绝按“未撤回”处理。飞书用这种方式（`lark-cli` 1.0.99 没有撤回事件），只读取消息的撤回标记。
 
 ### 发回复：send(entry)
 
