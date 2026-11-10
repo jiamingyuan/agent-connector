@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { replyParts, replyKey, safeLabel } from './text.mjs';
+import { replyParts, replyKey, safeLabel, splitMarkdown } from './text.mjs';
 
 const LIST_LIMIT = 10;
 const SUMMARY_TIMEOUT_MS = 5 * 60_000;
@@ -117,13 +117,33 @@ export function createHub({ config, agent, channel, runtime, log }) {
     const label = current?.name || '新会话';
     return { label, note: mode ? `${agent.modes.privateOnly?.includes(mode) ? '⚠️ ' : ''}${mode} mode` : '' };
   }
-  function reply(message, text, kind = 'answer') {
-    const { label, note } = header(message.chatId);
-    const format = channel.richText && (kind === 'answer' || label) ? 'markdown' : 'text';
-    for (const [index, part] of replyParts(text, format, label, note).entries()) {
+  // What a channel that draws its own header (channel.cards) gets with each reply: the session name,
+  // permission mode, model, context size and plan limits, plus this turn's totals on an answer.
+  function cardInfo(chatId, turn) {
+    const current = state.sessions[chatId];
+    let mode;
+    if (agent.modes) { try { mode = agent.modes.resolve(state.modes[chatId]); } catch { /* invalid config */ } }
+    const stats = current?.stats || {};
+    return { title: current?.name || '新会话', mode: mode && { name: mode, risky: Boolean(agent.modes.privateOnly?.includes(mode)) },
+      model: stats.model, effort: stats.effort, context: stats.context, quota: state.quota, turn };
+  }
+  function reply(message, text, kind = 'answer', turn) {
+    let parts, format, card;
+    if (channel.cards) {
+      format = 'card';
+      card = cardInfo(message.chatId, turn);
+      parts = splitMarkdown(text);
+    } else {
+      const { label, note } = header(message.chatId);
+      format = channel.richText && (kind === 'answer' || label) ? 'markdown' : 'text';
+      parts = replyParts(text, format, label, note);
+    }
+    for (const [index, part] of parts.entries()) {
       const key = replyKey(message.id, kind, index);
+      // The header details go on the first card, this turn's totals on the last.
+      const partCard = card && { ...card, quota: index === 0 ? card.quota : undefined, turn: index === parts.length - 1 ? card.turn : undefined };
       if (!state.outbox.some(entry => entry.key === key)) state.outbox.push({
-        messageId: message.id, chatId: message.chatId, text: part, format, kind, key, createdAt: Date.now(),
+        messageId: message.id, chatId: message.chatId, text: part, format, kind, key, createdAt: Date.now(), ...(partCard ? { card: partCard } : {}),
       });
     }
     save();
@@ -186,12 +206,25 @@ export function createHub({ config, agent, channel, runtime, log }) {
       active.delete(message.chatId); status();
     }
   }
-  function runAgent(message, { images = [], files = [], outbox, target }) {
+  // Stats arrive while a turn runs: the account's plan limits, and the session's model, effort and context.
+  function recordStats(chatId, target, stats) {
+    if (stats.quota) state.quota = { ...stats.quota, at: Date.now() };
+    const current = state.sessions[chatId];
+    if (!current || (target.id && current.id !== target.id)) return;
+    const { model, effort, context } = stats;
+    current.stats = { ...current.stats, ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(Number.isFinite(context) ? { context } : {}) };
+  }
+  function runAgent(message, { images = [], files = [], outbox, target, turn = {} }) {
+    const startedAt = Date.now();
     return track(message, agent.runTurn({ sessionId: target.id, cwd: target.cwd, text: composeText(message, target, files, outbox), images, files, outbox,
       mode: state.modes[message.chatId], timeoutMs: config.turnTimeoutMs, turnKey: replyKey(message.id, 'output'),
       // The bridge's own instructions (workspace/CLAUDE.md) still apply when the chat's session runs elsewhere.
       instructionsFile: target.cwd !== config.workspace && fs.existsSync(path.join(config.workspace, 'CLAUDE.md')) ? path.join(config.workspace, 'CLAUDE.md') : undefined,
-      onSession: id => rememberSession(message.chatId, target, id) }), 'agent');
+      onSession: id => rememberSession(message.chatId, target, id),
+      onStats: stats => {
+        recordStats(message.chatId, target, stats);
+        if (stats.turn) Object.assign(turn, stats.turn, { seconds: Math.round((Date.now() - startedAt) / 1000) });
+      } }), 'agent');
   }
 
   // ---- /compact ----
@@ -206,6 +239,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
       await channel.acknowledge(message);
       if (superseded(message, generation)) return;
       const result = await track(message, agent.compact({ sessionId: target.id, cwd: target.cwd, instructions,
+        onStats: stats => recordStats(message.chatId, target, stats),
         timeoutMs: Math.min(config.turnTimeoutMs, COMPACT_TIMEOUT_MS) }), 'compact');
       if (result !== null && !stopping) await reply(message, result, 'compact');
     } catch (error) {
@@ -392,8 +426,10 @@ export function createHub({ config, agent, channel, runtime, log }) {
     if (terminal?.busy) return reply(message, `会话「${session.name}」正在终端里执行任务，等它结束后再切换。`, 'switch');
     await channel.acknowledge(message);
     if (superseded(message, generation)) return;
+    // The header shows the model and context as of the session's last answer until the next turn.
+    const stats = sessions.stats?.(session.file);
     state.sessions[message.chatId] = { id: session.id, cwd: session.cwd, name: session.name, file: session.file,
-      updatedAt: new Date().toISOString() };
+      updatedAt: new Date().toISOString(), ...(stats?.model ? { stats } : {}) };
     save(); status();
     log('session_switched', { chatId: message.chatId, messageId: message.id });
     let recap;
@@ -562,7 +598,8 @@ export function createHub({ config, agent, channel, runtime, log }) {
       const files = [...pending, ...inline];
       const outbox = prepareOutbox(message);
       let result;
-      try { result = await runAgent(message, { images, files, outbox, target }); }
+      const turn = {};
+      try { result = await runAgent(message, { images, files, outbox, target, turn }); }
       finally { if (outbox && !result) removeIfEmpty(outbox); }
       // Pending files are used up only by a completed turn; a failed or stopped one keeps them.
       if (result !== null && pending.length) {
@@ -572,7 +609,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
         save();
       }
       if (result && !stopping) {
-        await reply(message, result);
+        await reply(message, result, 'answer', Object.keys(turn).length ? turn : undefined);
         if (outbox) await sendOutbox(message, outbox);
         await autoName(message);
       }

@@ -73,6 +73,7 @@ export function createAgent(config, context) {
 | `instructionsFile` | string \| undefined | 会话不在 `config.workspace` 中运行时，指向 `workspace/CLAUDE.md`；Agent 应把它作为附加指令（Claude Code 用 `--append-system-prompt-file`）。 |
 | `turnKey` | string | 本条消息唯一、可安全用作文件名的键，例如 Codex 用它命名答案文件。 |
 | `onSession(id)` | function | 一旦知道会话 ID 就调用（可以多次）。中枢保存后，下一轮作为 `sessionId` 传回；不调用则每轮都是新会话。 |
+| `onStats(stats)` | function | 可选，运行中随时调用，`stats` 可含 `model`、`effort`、`context`（当前上下文 token 数）、`quota`（`{ fiveHour, sevenDay }`，各为 `{ used: 0–1, resetsAt: 秒 }`）、`turn`（本轮 `{ output, newInput, cacheRead }`）。中枢记下后交给支持卡片的渠道显示。 |
 
 返回 `{ cancel, result }`，且必须同步返回（启动失败也通过 `result` 拒绝）：
 
@@ -95,7 +96,7 @@ runTurn: ({ sessionId, cwd, text, timeoutMs, onSession }) => runCliTurn({
 }),
 ```
 
-`parse` 返回的字段：`ready` 表示已启动（2 分钟内未出现则按启动失败处理）；`sessionId` 会转给 `onSession`；`completed` / `failed` 表示本轮成功或失败；`text` 为最终答案（多次出现取最后一次）；`errorText` 为面向用户的失败原因（取第一次出现的），失败时拼进错误提示，例如“Foo 本轮没有完成：<原因>”。退出码非 0、未出现 `completed` 或答案为空都按失败处理。进程放在独立进程组里，取消或超时会整组终止；stderr 被丢弃，避免把模型输出或凭证写进日志。`runCliQuery({ bin, args, input, cwd, env, parse })` 用于只取一次结果的查询（如 `/usage`）。
+`parse` 返回的字段：`ready` 表示已启动（2 分钟内未出现则按启动失败处理）；`sessionId` 会转给 `onSession`；`completed` / `failed` 表示本轮成功或失败；`text` 为最终答案（多次出现取最后一次）；`errorText` 为面向用户的失败原因（取第一次出现的），`stats` 会转给 `onStats`；失败时拼进错误提示，例如“Foo 本轮没有完成：<原因>”。退出码非 0、未出现 `completed` 或答案为空都按失败处理。进程放在独立进程组里，取消或超时会整组终止；stderr 被丢弃，避免把模型输出或凭证写进日志。`runCliQuery({ bin, args, input, cwd, env, parse })` 用于只取一次结果的查询（如 `/usage`）。
 
 ### 可选功能
 
@@ -132,6 +133,7 @@ runTurn: ({ sessionId, cwd, text, timeoutMs, onSession }) => runCliTurn({
 | `pick(list, query, listedIds)` | 解析 `/switch` 的参数，返回匹配的会话数组：数字指 `listedIds` 中的序号，也可支持 ID 前缀或名称。 |
 | `running()` | 返回 `Map<会话ID, { pid, busy }>`，表示正被其他进程（如终端）打开的会话；`busy` 时中枢拒绝进入和执行。 |
 | `digest(file)` | 返回 `{ prompt, reply }`：最近一轮的提问和回答摘录，梗概生成失败时使用。 |
+| `stats(file)` | 可选，返回 `{ model, context }`：会话最后一次回答时的模型和上下文大小，`/switch` 后用于卡片标题区。 |
 | `format(shown, { total, running, current, query })` | 返回 `/sessions` 的完整回复文字。 |
 | `ago(mtimeMs)` | 返回“3 分钟前”这样的时间文字。 |
 | `resumeHint(id)` | 返回在终端里重新打开该会话的命令，用于提醒。 |
@@ -153,6 +155,7 @@ export function createChannel(config, context) {
   return {
     id: 'foo', displayName: 'Foo',  // displayName 出现在回复和提示词里，如“这条消息是用户在Foo里发来的”
     richText: true,                 // 能发 Markdown 时为 true
+    cards: false,                   // 可选：为 true 时回复条目不带首行，而带 card 信息（会话名、模式、模型、上下文、额度、本轮 token），由 send 自行绘制
     formatNote: '[Foo回复格式]\n…', // richText 时附在每轮输入末尾的回复格式要求
     start(handlers), stop(),
     send(entry), isPermanentSendError(error),

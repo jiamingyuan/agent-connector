@@ -57,6 +57,12 @@ if(args.includes('consume')){
   fs.appendFileSync(path.join(root,'replies.jsonl'),JSON.stringify({id:args[args.indexOf('--message-id')+1],format:'file',text:name,cwd:process.cwd(),content:fs.readFileSync(name,'utf8').slice(0,40)})+'\\n');
   return console.log(JSON.stringify({ok:true,data:{}}));
  }
+ if(args.includes('+messages-reply')&&args.includes('--msg-type')){
+  const card=JSON.parse(args[args.indexOf('--content')+1]);
+  if(card.header?.title?.content==='REJECT-CARD')return console.log(JSON.stringify({ok:false,error:{type:'api',code:230099,subtype:'invalid_card'}}));
+  fs.appendFileSync(path.join(root,'replies.jsonl'),JSON.stringify({id:args[args.indexOf('--message-id')+1],format:'card',card,text:card.body.elements.filter(e=>e.tag==='markdown').map(e=>e.content).join('\\n')})+'\\n');
+  return console.log(JSON.stringify({ok:true,data:{}}));
+ }
  if(args.includes('+messages-reply')){const flag=args.includes('--markdown')?'--markdown':'--text';
   fs.appendFileSync(path.join(root,'replies.jsonl'),JSON.stringify({id:args[args.indexOf('--message-id')+1],format:flag.slice(2),text:args[args.indexOf(flag)+1]})+'\\n');}
  if(args.includes('+upload')&&args.includes('drive')){
@@ -126,8 +132,12 @@ process.stdin.on('data',x=>input+=x);process.stdin.on('end',()=>{
   process.exit(1);
  }
  if(summary&&failSummary.some(prefix=>resumed.startsWith(prefix)))process.exit(1);
- console.log(JSON.stringify({type:'system',subtype:'init',session_id:session}));
- console.log(JSON.stringify({type:'result',subtype:'success',session_id:session,result:summary?'- 目标：重构 alpha':'answer in '+path.basename(process.cwd())}));
+ console.log(JSON.stringify({type:'system',subtype:'init',session_id:session,model:'claude-opus-5-5'}));
+ if(!summary){
+  console.log(JSON.stringify({type:'rate_limit_event',rate_limit_info:{unifiedWindows:{five_hour:{utilization:0.3,resetsAt:1794225000},seven_day:{utilization:0.85,resetsAt:1794430800}}}}));
+  console.log(JSON.stringify({type:'assistant',parent_tool_use_id:null,session_id:session,message:{model:'claude-opus-5-5',usage:{input_tokens:2,cache_creation_input_tokens:14743,cache_read_input_tokens:41832,output_tokens:4},content:[{type:'text',text:'…'}]}}));
+ }
+ console.log(JSON.stringify({type:'result',subtype:'success',session_id:session,usage:summary?undefined:{input_tokens:4,cache_creation_input_tokens:14800,cache_read_input_tokens:60129,output_tokens:1234},result:summary?'- 目标：重构 alpha':'answer in '+path.basename(process.cwd())}));
 });
 `, { mode: 0o700 });
   await fs.writeFile(path.join(root, 'config.json'), JSON.stringify({

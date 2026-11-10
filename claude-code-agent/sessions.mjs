@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { clip, safeLabel } from '../core/text.mjs';
+import { contextTokens } from './cli.mjs';
 
 const transcriptName = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
 const bridgeNotes = /\n\n\[(?:桥接|飞书)[^\]\n]*\][\s\S]*$/u;
@@ -116,6 +117,20 @@ export function pickSession(sessions, query, listed = []) {
   }
   const name = sessionLabel(query).toLowerCase();
   return sessions.filter(session => session.name.toLowerCase() === name);
+}
+
+// Model and context size as of the session's last answer, for the reply header after /switch.
+export function sessionStats(file) {
+  let stats = {};
+  try {
+    for (const entry of entries(file)) {
+      const message = entry.message;
+      if (entry.type === 'assistant' && !entry.isSidechain && message?.usage && message.model && message.model !== '<synthetic>') {
+        stats = { model: message.model, context: contextTokens(message.usage) };
+      }
+    }
+  } catch { /* unreadable: no stats */ }
+  return stats;
 }
 
 function move(from, to) {

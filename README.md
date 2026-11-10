@@ -81,6 +81,16 @@ Claude Code 默认使用 `auto` 模式。`config.json` 的 `claudePermissionMode
 - 切换只影响当前聊天，保存在 `runtime/state.json`，重启后保留；切回默认模式时清除该聊天的设置，之后跟随 `config.json`。
 - 桥接程序始终带 `--permission-prompts none` 运行：没有人在场确认，所以任何需要确认的操作都会被拒绝，其余由权限模式决定。
 
+## 卡片回复
+
+`replyFormat` 为 `card` 时，每条回复是一张飞书卡片：
+
+- 标题区统一蓝色，标题是会话名；三个标签依次是权限模式（`bypassPermissions` 为红色并带 ⚠️）、模型全称和推理深度（如 `claude opus 5.5 - max`）、`context` 当前上下文大小（5 万以下绿色，5 万起橙色，20 万起红色）。
+- 正文上方两行文字额度：5 小时额度和本周额度的剩余比例与重置时间（UTC），剩余比例 50% 以下橙色、20% 以下红色。
+- 回答的最后一张卡片底部是本轮用时和 token：输出、新增输入（未缓存输入加写入缓存）、缓存读取；一轮里多次调用模型时为累计值，不含 auto 模式安全检查等附带调用。
+- 这些数据都由机器人从 Claude Code 每轮的输出中读取，不增加 token；其他指令的回复显示最近一次的数据，`/switch` 后取那个会话最后一次回答时的模型和上下文。
+- 飞书拒收卡片时，这条回复改用富文本发出。
+
 ## 切换会话
 
 会话之间没有主次：每个聊天只有一个“当前会话”。`/new` 在 `sessionDir`（默认主目录）里开一个新会话，和终端里开的会话放在同一处；`/switch` 切换到本机任一 Claude Code 会话，包括机器人开的、终端里开的项目会话，切走的会话仍在列表里，随时可以切回。更早版本创建的会话仍在本项目的 `workspace/` 里续接。
@@ -182,7 +192,8 @@ cp config.example.json config.json          # 或 Codex
 | `maxEventAgeMs` | 接受消息的最大年龄，单位毫秒。 |
 | `turnTimeoutMs` | 单条任务的最长运行时间，单位毫秒；前情梗概最多 5 分钟。 |
 | `allowGroupMentions` / `botOpenId` | 群聊默认关闭；开启时须提供本机器人正确的 open ID，并在飞书启用相应事件权限。 |
-| `replyFormat` | 设为 `markdown` 时用飞书富文本回复，否则用纯文本。 |
+| `replyFormat` | `card`：飞书卡片（见下）；`markdown`：飞书富文本，首行写会话名和权限模式；其他值为纯文本。 |
+| `claudeEffort` | 可选，Claude Code 的推理深度（如 `high`、`max`），以 `--effort` 传入并显示在卡片的模型标签上；省略时用 Claude Code 的默认值，标签只写模型名。 |
 | `claudePermissionMode` | Claude Code 的默认权限模式，省略时为 `auto`，可选值见[权限模式](#权限模式)。 |
 | `claudeAllowedTools` | Claude Code 预先允许的工具列表，例如 `["WebSearch", "WebFetch"]`。 |
 

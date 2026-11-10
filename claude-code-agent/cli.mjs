@@ -28,6 +28,7 @@ export function turnArgs(config, sessionId, { images = [], mode, files = [], cwd
   const args = ['-p', '--output-format', 'stream-json', '--verbose',
     '--permission-mode', permissionMode(config, mode), '--permission-prompts', 'none'];
   if (config.claudeAllowedTools?.length) args.push('--allowedTools', config.claudeAllowedTools.join(','));
+  if (config.claudeEffort) args.push('--effort', config.claudeEffort);
   if (images.length) args.push('--input-format', 'stream-json');
   // Received files and the outbox live in the bridge workspace; a session started elsewhere needs explicit access.
   const outside = [...new Set([...files.map(file => path.dirname(file.path)), ...(outbox ? [outbox] : [])])].filter(dir => !cwd || path.relative(cwd, dir).startsWith('..') || path.isAbsolute(path.relative(cwd, dir)));
@@ -77,16 +78,41 @@ function errorReason(kind, text) {
   return reason;
 }
 
+const count = value => (Number.isFinite(value) ? value : 0);
+// Tokens the model read for one call: the session's context at that point.
+export const contextTokens = usage => count(usage?.input_tokens) + count(usage?.cache_creation_input_tokens) + count(usage?.cache_read_input_tokens);
+// Plan limits as reported with every turn: share used and reset time (epoch seconds) per window.
+function quotaOf(info) {
+  const windows = info?.unifiedWindows || {};
+  const window = item => (item && Number.isFinite(item.utilization) ? { used: item.utilization, resetsAt: item.resetsAt } : undefined);
+  const quota = { fiveHour: window(windows.five_hour), sevenDay: window(windows.seven_day) };
+  return quota.fiveHour || quota.sevenDay ? quota : undefined;
+}
+
+// Besides text, events carry stats for the reply header: model, context size, plan limits and
+// (in the result) this turn's token totals. Usage on assistant events is partial while streaming,
+// and the result's modelUsage is cumulative for a resumed session, so totals come from result.usage.
 export function parseEvent(event) {
   if (event.type === 'system' && event.subtype === 'init') {
-    return { ready: true, sessionId: event.session_id, model: event.model };
+    return { ready: true, sessionId: event.session_id, model: event.model, stats: event.model ? { model: event.model } : undefined };
   }
   if (event.type === 'assistant' && typeof event.error === 'string') {
     return { errorText: errorReason(event.error, textOf(event.message)) };
   }
+  if (event.type === 'assistant' && !event.parent_tool_use_id && event.message?.usage && event.message.model !== '<synthetic>') {
+    return { stats: { model: event.message.model, context: contextTokens(event.message.usage) } };
+  }
+  if (event.type === 'rate_limit_event') {
+    const quota = quotaOf(event.rate_limit_info);
+    return quota ? { stats: { quota } } : {};
+  }
   if (event.type === 'result') {
     const completed = event.subtype === 'success' && event.is_error !== true;
+    const usage = event.usage || {};
+    const turn = { output: count(usage.output_tokens), newInput: count(usage.input_tokens) + count(usage.cache_creation_input_tokens),
+      cacheRead: count(usage.cache_read_input_tokens) };
     return { completed, failed: !completed, sessionId: event.session_id,
+      ...(turn.output || turn.newInput || turn.cacheRead ? { stats: { turn } } : {}),
       text: completed && typeof event.result === 'string' ? event.result : undefined,
       ...(!completed && typeof event.result === 'string' && event.result.trim() ? { errorText: errorReason(null, event.result) } : {}) };
   }
@@ -118,9 +144,11 @@ const tokens = value => (Number.isFinite(value) ? value.toLocaleString('en-US') 
 export function parseCompactEvent(event) {
   if (event.type === 'system' && event.subtype === 'compact_boundary') {
     const { pre_tokens: before, post_tokens: after } = event.compact_metadata || {};
-    return { text: `已压缩会话上下文：约 ${tokens(before)} → ${tokens(after)} tokens。之后的消息会基于压缩后的摘要继续，会话 ID 不变。` };
+    return { text: `已压缩会话上下文：约 ${tokens(before)} → ${tokens(after)} tokens。之后的消息会基于压缩后的摘要继续，会话 ID 不变。`,
+      ...(Number.isFinite(after) ? { stats: { context: after } } : {}) };
   }
   const update = parseEvent(event);
   delete update.text;
+  delete update.stats;
   return update;
 }

@@ -5,7 +5,8 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import fs from 'node:fs';
 import path from 'node:path';
-import { eventDecision, messageText, replyArgs, fileReplyArgs } from './protocol.mjs';
+import { eventDecision, messageText, replyArgs, fileReplyArgs, cardReplyArgs } from './protocol.mjs';
+import { buildCard, fallbackText } from './card.mjs';
 import { withStaging } from './download.mjs';
 import { prepareImages } from './images.mjs';
 import { prepareFiles, maxFileBytes } from './files.mjs';
@@ -81,6 +82,16 @@ export function createChannel(config, { root, env, log }) {
     });
   }
 
+  // A card Feishu refuses (malformed or too large) goes out once more as the Markdown post it replaces.
+  async function sendCard(entry) {
+    try { return await runLark(cardReplyArgs(entry, buildCard(entry.text, entry.card))); }
+    catch (error) {
+      if (!error.channel || error.detail?.type === 'network') throw error;
+      log('card_rejected', { messageId: entry.messageId, code: error.detail?.code, subtype: error.detail?.subtype });
+      return runLark(replyArgs({ ...entry, format: 'markdown', text: fallbackText(entry.text, entry.card), key: `${entry.key.slice(0, 36)}post` }));
+    }
+  }
+
   function start(handlers) {
     if (stopped) return;
     listener = spawn(config.larkBin, [...larkArgs, 'event', 'consume', 'im.message.receive_v1', '--as', 'bot'], {
@@ -116,11 +127,12 @@ export function createChannel(config, { root, env, log }) {
   return {
     id: 'lark',
     displayName: '飞书',
-    richText: config.replyFormat === 'markdown',
+    richText: config.replyFormat === 'markdown' || config.replyFormat === 'card',
+    cards: config.replyFormat === 'card',
     formatNote,
     start,
     stop() { stopped = true; clearTimeout(restartTimer); listener?.stdin.end(); listener?.kill('SIGTERM'); },
-    send: entry => (entry.file ? sendFile(entry) : runLark(replyArgs(entry))),
+    send: entry => (entry.file ? sendFile(entry) : entry.card ? sendCard(entry) : runLark(replyArgs(entry))),
     isPermanentSendError: error => error.permanent === true || PERMANENT_REPLY_ERRORS.has(error.detail?.code),
     // Up to 30 MB as a file reply (Feishu's limit, no empty files); larger ones as a Drive link.
     fileReplies: { maxBytes: CHAT_FILE_BYTES, linkMaxBytes: DRIVE_FILE_BYTES },

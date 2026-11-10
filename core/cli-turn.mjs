@@ -1,6 +1,6 @@
 // Runs one agent turn as a child CLI process that prints JSON lines. Shared by CLI-based agent
 // adapters (Claude Code, Codex); an adapter only supplies the command, the stdin input and a
-// parser that turns each JSON event into { ready, sessionId, completed, failed, text, errorText }.
+// parser that turns each JSON event into { ready, sessionId, completed, failed, text, errorText, stats }.
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
@@ -17,7 +17,7 @@ function terminate(child) {
 // Returns { cancel(), result }. result resolves to the final text, or null after cancel();
 // it rejects with TurnError code 'startup' | 'timeout' | 'failed'.
 export function runCliTurn({ bin, args, input, cwd, env, parse, outputFile, timeoutMs, startupTimeoutMs = 120_000,
-  agentName, onSession }) {
+  agentName, onSession, onStats }) {
   const child = spawn(bin, args, { cwd, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
   const job = { cancelled: false, timedOut: false, startupFailed: false };
   const startupTimer = setTimeout(() => { job.startupFailed = true; terminate(child); }, startupTimeoutMs);
@@ -30,6 +30,7 @@ export function runCliTurn({ bin, args, input, cwd, env, parse, outputFile, time
       const update = parse(item);
       if (update.ready) clearTimeout(startupTimer);
       if (update.sessionId) onSession?.(update.sessionId);
+      if (update.stats) onStats?.(update.stats);
       if (update.completed) completed = true;
       if (update.failed) { completed = false; failure = 'turn.failed'; }
       if (update.text !== undefined) resultText = update.text;

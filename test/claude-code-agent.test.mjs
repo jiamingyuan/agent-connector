@@ -15,13 +15,30 @@ test('Claude resumes an explicit session without bypassing tool permissions', ()
 });
 test('Claude results require success and preserve the exact session ID', () => {
   assert.deepEqual(parseEvent({ type: 'system', subtype: 'init', session_id: 's1', model: 'current' }),
-    { ready: true, sessionId: 's1', model: 'current' });
+    { ready: true, sessionId: 's1', model: 'current', stats: { model: 'current' } });
   assert.equal(parseEvent({ type: 'result', subtype: 'success', is_error: false, result: 'answer', session_id: 's1' }).text, 'answer');
   const failure = parseEvent({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 'failure' });
   assert.equal(failure.completed, false);
   assert.equal(failure.failed, true);
   assert.equal(failure.text, undefined);
   assert.deepEqual(parseEvent({ type: 'assistant', message: { content: 'intermediate text' } }), {});
+});
+
+test('turn stats: context from the last main-chain call, plan limits, and per-turn totals from result.usage', () => {
+  const usage = { input_tokens: 2, cache_creation_input_tokens: 221, cache_read_input_tokens: 36531, output_tokens: 4 };
+  assert.deepEqual(parseEvent({ type: 'assistant', parent_tool_use_id: null, message: { model: 'claude-sonnet-5-5', usage, content: [] } }).stats,
+    { model: 'claude-sonnet-5-5', context: 36754 });
+  // Subagent calls and synthetic local-command messages do not change the session's context.
+  assert.deepEqual(parseEvent({ type: 'assistant', parent_tool_use_id: 'toolu_1', message: { model: 'claude-haiku-5-5', usage, content: [] } }), {});
+  assert.deepEqual(parseEvent({ type: 'assistant', message: { model: '<synthetic>', usage, content: [] } }), {});
+  assert.deepEqual(parseEvent({ type: 'rate_limit_event', rate_limit_info: { unifiedWindows: { five_hour: { utilization: 0.3, resetsAt: 1 }, seven_day: { utilization: 0.8, resetsAt: 2 } } } }).stats,
+    { quota: { fiveHour: { used: 0.3, resetsAt: 1 }, sevenDay: { used: 0.8, resetsAt: 2 } } });
+  // modelUsage is cumulative on a resumed session, so it is ignored.
+  const result = parseEvent({ type: 'result', subtype: 'success', result: 'OK', usage: { input_tokens: 4, cache_creation_input_tokens: 13154, cache_read_input_tokens: 60129, output_tokens: 145 },
+    modelUsage: { 'claude-sonnet-5-5': { inputTokens: 999999 } } });
+  assert.deepEqual(result.stats, { turn: { output: 145, newInput: 13158, cacheRead: 60129 } });
+  assert(turnArgs({ ...config, claudeEffort: 'max' }, null).join(' ').includes('--effort max'));
+  assert(!turnArgs(config, null).includes('--effort'));
 });
 test('Cora can pre-approve web research without granting shell or editing permissions', () => {
   const args = turnArgs({ ...config, claudeAllowedTools: ['WebSearch', 'WebFetch'] }, 's1');
