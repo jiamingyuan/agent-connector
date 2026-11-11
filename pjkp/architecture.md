@@ -1,6 +1,6 @@
 # agent-connector 架构
 
-核对：2026-11-11，[V1.3](V1.3/iteration.md)。模块结构、接口、配置和各系统的部署方式以 [README](../README.md) 和 [core/README.md](../core/README.md) 为准；这里只写本机实例的运行环境，以及源码和 README 表达不了的注意事项。
+核对：2026-11-11，[V1.4](V1.4/iteration.md)。模块结构、接口、配置和各系统的部署方式以 [README](../README.md) 和 [core/README.md](../core/README.md) 为准；这里只写本机实例的运行环境，以及源码和 README 表达不了的注意事项。
 
 ## 运行环境（本机实例）
 
