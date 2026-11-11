@@ -11,7 +11,7 @@
 
 ## 版本
 
-- [V1.4](V1.4/iteration.md)：已在本机上线（Sophia 与 Cora 两个机器人），是否打标签待定。连接多个机器人（channel agent）、会话独占、按机器人配置会话 / 权限模式 / 模型范围。
+- [V1.4](V1.4/iteration.md)：已推送（`d307ca5`）并在本机上线（Sophia 与 Cora 两个机器人），是否打标签待定。连接多个机器人（channel agent）、会话独占、按机器人配置会话 / 权限模式 / 模型范围。
 - [V1.3](V1.3/iteration.md)：会话不分主次（取消默认会话与 `/exit`）；飞书卡片回复（模式、模型、context、额度、本轮 token）；撤回消息即中断；`/model`、`/effort`。
 - [V1.2](V1.2/iteration.md)：多系统服务与 `doctor`、多用户、MIT、回复首行显示权限模式、改名 agent-connector；收发文件；单一会话列表、新会话放在 Claude Code 默认位置并可在终端 `/resume` 找到、自动起名、`/delete`；大文件经云空间发链接（受租户上限约束）、默认会话按名字称呼。
 - [V1.1](V1.1/iteration.md)：`/compact`、`/rename`，飞书图片适配 `lark-cli` 1.0.98，失败时说明真实原因。
