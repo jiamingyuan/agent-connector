@@ -57,3 +57,41 @@ test('a configured default other than auto is shown as the default and a chat ca
   assert(replies[3].text.includes('权限模式：auto（/mode 切换）'));
   assert.deepEqual(state.modes, { oc_private: 'auto' });
 });
+
+const flag = (call, name) => (call.args.includes(name) ? call.args[call.args.indexOf(name) + 1] : null);
+
+test('/model and /effort switch this chat from the next message on, and default goes back', { timeout: 20_000 }, async t => {
+  const steps = ['/model', '第一条', '/model Sonnet', '/effort max', '/status', '第二条', '/model gpt 5', '/effort ultra', '/model sonnet',
+    '/model claude-haiku-5-5', '第三条', '/model default', '/effort 默认', '第四条', '/help'];
+  const { replies, calls, state } = await runBridge(t, async () => ({ events: steps.map(content => ({ ...privateEvent, content })) }));
+  const text = replies.map(r => r.text);
+  assert(text[0].startsWith('当前模型：Claude Code 默认（默认）') && text[0].includes('sonnet：') && text[0].includes('/model default 恢复默认'), text[0]);
+  assert.match(text[2], /^已将模型切换为 sonnet：.*从下一条消息开始生效，\/model default 可恢复默认。$/);
+  assert.match(text[3], /^已将推理深度切换为 max：/);
+  assert(text[4].includes('模型：sonnet（/model 切换）') && text[4].includes('推理深度：max（/effort 切换）'), text[4]);
+  assert(text[6].startsWith('没有「gpt 5」这个模型。') && text[6].includes('当前模型：sonnet（/model 切换）'), text[6]);
+  assert(text[7].startsWith('没有「ultra」这个推理深度。') && text[7].includes('low：'), text[7]);
+  assert.equal(text[8], '当前模型已经是 sonnet。');
+  assert.match(text[9], /^已将模型切换为 claude-haiku-5-5。/);
+  assert.match(text[11], /^已将模型切换为 Claude Code 默认（默认）。从下一条消息开始生效。$/);
+  assert.match(text[12], /^已将推理深度切换为 Claude Code 默认（默认）。/);
+  assert(text[14].includes('/model [名称]') && text[14].includes('/effort [级别]'));
+  assert.deepEqual(calls.filter(call => !call.input.startsWith('/rename')).map(call => [call.input.split('\n')[0], flag(call, '--model'), flag(call, '--effort')]),
+    [['第一条', null, null], ['第二条', 'sonnet', 'max'], ['第三条', 'claude-haiku-5-5', 'max'], ['第四条', null, null]]);
+  assert.deepEqual([state.models, state.efforts], [{}, {}]);
+});
+
+test('configured model and effort are the defaults; a chat can override them and the card shows the effort in effect', { timeout: 20_000 }, async t => {
+  const { replies, calls, state } = await runBridge(t, async () => ({
+    events: ['/effort', '你好', '/effort low', '再来', '/status'].map(content => ({ ...privateEvent, content })),
+    config: { claudeModel: 'opus', claudeEffort: 'high', replyFormat: 'card' },
+  }));
+  assert(replies[0].text.startsWith('当前推理深度：high（默认）') && replies[0].text.includes('high（默认）：'), replies[0].text);
+  const turns = calls.filter(call => !call.input.startsWith('/rename'));
+  assert.deepEqual(turns.map(call => [flag(call, '--model'), flag(call, '--effort')]), [['opus', 'high'], ['opus', 'low']]);
+  const modelTag = reply => reply.card.header.text_tag_list.map(tag => tag.text.content).find(content => content.includes('opus'));
+  assert.match(modelTag(replies[1]), / - high$/);
+  assert.match(modelTag(replies[2]), / - low$/, 'the reply to /effort already shows the new level');
+  assert(replies[4].text.includes('模型：opus（默认）') && replies[4].text.includes('推理深度：low（/effort 切换）'), replies[4].text);
+  assert.deepEqual([state.models, state.efforts], [{}, { oc_private: 'low' }]);
+});

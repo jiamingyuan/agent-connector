@@ -24,11 +24,34 @@ export function findPermissionMode(name) {
   return Object.keys(permissionModes).find(mode => mode.toLowerCase() === value) || null;
 }
 
-export function turnArgs(config, sessionId, { images = [], mode, files = [], cwd, outbox, instructionsFile } = {}) {
+// Models selectable with /model: an alias for the newest model of a family, or a full model name.
+export const modelAliases = {
+  fable: 'Fable 系列的最新模型，能力最强，消耗额度最多',
+  opus: 'Opus 系列的最新模型',
+  sonnet: 'Sonnet 系列的最新模型，速度与能力均衡',
+  haiku: 'Haiku 系列的最新模型，最快，消耗额度最少',
+};
+export function findModel(name) {
+  const value = String(name || '').trim().toLowerCase();
+  return Object.hasOwn(modelAliases, value) || /^claude-[a-z0-9][a-z0-9.-]*(\[1m\])?$/.test(value) ? value : null;
+}
+// Reasoning effort levels selectable with /effort (claude --effort).
+export const effortLevels = {
+  low: '思考最少，最快',
+  medium: '适中',
+  high: '思考较多',
+  xhigh: '思考更多，更慢',
+  max: '思考最多，最慢，消耗额度最多',
+};
+export const findEffort = name => Object.keys(effortLevels).find(level => level === String(name || '').trim().toLowerCase()) || null;
+
+export function turnArgs(config, sessionId, { images = [], mode, model, effort, files = [], cwd, outbox, instructionsFile } = {}) {
   const args = ['-p', '--output-format', 'stream-json', '--verbose',
     '--permission-mode', permissionMode(config, mode), '--permission-prompts', 'none'];
   if (config.claudeAllowedTools?.length) args.push('--allowedTools', config.claudeAllowedTools.join(','));
-  if (config.claudeEffort) args.push('--effort', config.claudeEffort);
+  // The chat's /model and /effort choices if any, else the configured defaults, else Claude Code's own.
+  if (model || config.claudeModel) args.push('--model', model || config.claudeModel);
+  if (effort || config.claudeEffort) args.push('--effort', effort || config.claudeEffort);
   if (images.length) args.push('--input-format', 'stream-json');
   // Received files and the outbox live in the bridge workspace; a session started elsewhere needs explicit access.
   const outside = [...new Set([...files.map(file => path.dirname(file.path)), ...(outbox ? [outbox] : [])])].filter(dir => !cwd || path.relative(cwd, dir).startsWith('..') || path.isAbsolute(path.relative(cwd, dir)));

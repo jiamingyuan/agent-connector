@@ -28,7 +28,7 @@ test('agents expose identity, capabilities and runTurn; optional features are co
     assert.equal(typeof agent.capabilities.images, 'boolean');
     assert.equal(typeof agent.capabilities.files, 'boolean');
     assert.equal(typeof agent.runTurn, 'function');
-    if (agent.modes) for (const key of ['descriptions', 'resolve', 'find']) assert(agent.modes[key], key);
+    for (const part of ['modes', 'models', 'efforts']) if (agent[part]) for (const key of ['descriptions', 'resolve', 'find']) assert(agent[part][key], `${part}.${key}`);
     if (agent.sessions) for (const key of ['list', 'filter', 'pick', 'running', 'digest', 'format', 'ago', 'resumeHint', 'recap']) assert.equal(typeof agent.sessions[key], 'function', key);
     if (agent.usage) assert.equal(typeof agent.usageLabel, 'string');
     if (agent.compact) assert.equal(typeof agent.compact, 'function');

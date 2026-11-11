@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { agentId, channelId, loadAgent, loadChannel } from '../core/registry.mjs';
 
 // Versions the current code was last verified against (see pjkp/ version records).
-export const TESTED = { 'claude-code': '2.1.319', 'lark-cli': '1.0.98' };
+export const TESTED = { 'claude-code': '2.1.322', 'lark-cli': '1.0.99' };
 
 function version(bin) {
   try { return /\d+\.\d+\.\d+/.exec(execFileSync(bin, ['--version'], { encoding: 'utf8', timeout: 15_000, stdio: ['ignore', 'pipe', 'pipe'] }))?.[0] || '?'; }

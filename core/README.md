@@ -67,6 +67,7 @@ export function createAgent(config, context) {
 | `text` | string | 发给 Agent 的完整文字。中枢已在用户原文后附加以 `\n\n[桥接` 开头的说明块（群聊范围、当前工作目录、渠道的回复格式要求），原样送入即可。 |
 | `images` | array | `capabilities.images` 为 true 且消息带图时为 `[{ path, mediaType, data }]`（本地文件路径、MIME 类型、base64 内容），否则为 `[]`。 |
 | `mode` | string \| undefined | 这个聊天用 `/mode` 选的模式；`undefined` 表示用默认值。没有 `modes` 的 Agent 忽略。 |
+| `model`、`effort` | string \| undefined | 这个聊天用 `/model`、`/effort` 选的模型和推理深度；`undefined` 表示用默认值。没有 `models` / `efforts` 的 Agent 忽略。 |
 | `timeoutMs` | number | 本轮最长运行时间（`config.turnTimeoutMs`）。Agent 必须自己在超时后停止。 |
 | `files` | array | 用户在这条消息之前发来、随本轮交付的文件 `[{ path, name, size }]`（`capabilities.files` 为 false 时始终为 `[]`）。中枢已在 `text` 里写明文件名和本地路径；Agent 要保证能读到这些路径，例如 Claude Code 在会话目录之外时加 `--add-dir`。 |
 | `outbox` | string \| undefined | 本轮发件目录，渠道支持发回文件且 `capabilities.files` 为 true 时提供。中枢已在 `text` 里告诉模型把要发给用户的文件存到这里；本轮成功后，中枢把目录里的普通文件（每个不超过渠道的 `fileReplies.linkMaxBytes`，没有时为 `maxBytes`；最多 5 个）作为回复发出。Agent 要保证能写这个目录，例如 Claude Code 在会话目录之外时加 `--add-dir`。 |
@@ -111,6 +112,17 @@ runTurn: ({ sessionId, cwd, text, timeoutMs, onSession }) => runCliTurn({
 | `find(name)` | 把用户输入（大小写、简写）解析为模式名，找不到返回 `null`。 |
 | `privateOnly` | 可选，只允许在私聊中切换的模式名数组（如高风险模式）；切换后提醒用户用完切回。 |
 | `hint` | 可选，附在“发送 /mode 模式名 切换”后的简短说明。 |
+
+**`models`、`efforts`** → `/model`、`/effort`，以及 `/status` 中的“模型”“推理深度”。两者结构相同，可以只提供其中一个；选择按聊天保存，并通过 `runTurn` 的 `model`、`effort` 传回：
+
+| 字段 | 含义 |
+| --- | --- |
+| `descriptions` | `{ 名称: 说明 }`，`/model`、`/effort` 列出的可选项；模型名不固定时可以是 `{}`。 |
+| `resolve(override?)` | 返回生效的值：有 `override` 用它，否则用配置的默认值；没有配置默认值时返回 `undefined`（显示为“<displayName> 默认”）。 |
+| `find(name)` | 把用户输入解析为可用的值，不接受时返回 `null`。 |
+| `hint` | 可选，附在“发送 /model 名称 切换”后的简短说明。 |
+
+提供 `efforts` 后，卡片上的推理深度取这个聊天当前生效的值，不再需要 `onStats` 报告 `effort`。
 
 **`usage()` 和 `usageLabel`** → `/usage`：`usage()` 返回 `Promise<string>`（直接发给用户的文字），`usageLabel` 是 `/help` 里的说明。失败时中枢回复通用提示。
 

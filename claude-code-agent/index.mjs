@@ -1,9 +1,9 @@
 // Agent adapter: local Claude Code CLI. Implements the agent interface in core/README.md, plus the
-// optional features modes (/mode), usage (/usage), compact (/compact), rename (/rename) and sessions
+// optional features modes (/mode), models (/model), efforts (/effort), usage (/usage), compact (/compact), rename (/rename) and sessions
 // (/sessions, /switch, /delete).
 import path from 'node:path';
 import { runCliTurn, runCliQuery } from '../core/cli-turn.mjs';
-import { permissionModes, permissionMode, findPermissionMode, turnArgs, recapArgs, usageArgs, recapPrompt, turnInput,
+import { permissionModes, permissionMode, findPermissionMode, modelAliases, findModel, effortLevels, findEffort, turnArgs, recapArgs, usageArgs, recapPrompt, turnInput,
   parseEvent, compactArgs, compactInput, parseCompactEvent, renameArgs, renameInput, parseRenameEvent } from './cli.mjs';
 import { claudeHome, listSessions, filterSessions, pickSession, runningSessions, sessionDigest, formatSessionList,
   timeAgo, trashSession, sessionStats } from './sessions.mjs';
@@ -25,17 +25,26 @@ export function createAgent(config, { env: baseEnv }) {
     id: 'claude-code',
     displayName,
     capabilities: { images: true, files: true },
-    runTurn: ({ sessionId, cwd, text, images = [], files = [], outbox, instructionsFile, mode, timeoutMs, onSession, onStats }) => {
-      // The effort is whatever the bridge passes (--effort); Claude Code does not report it.
-      if (config.claudeEffort) onStats?.({ effort: config.claudeEffort });
-      return run(turnArgs(config, sessionId, { images, mode, files, cwd, outbox, instructionsFile }), turnInput(text, images), cwd, timeoutMs, onSession, onStats);
-    },
+    runTurn: ({ sessionId, cwd, text, images = [], files = [], outbox, instructionsFile, mode, model, effort, timeoutMs, onSession, onStats }) =>
+      run(turnArgs(config, sessionId, { images, mode, model, effort, files, cwd, outbox, instructionsFile }), turnInput(text, images), cwd, timeoutMs, onSession, onStats),
     modes: {
       descriptions: permissionModes,
       resolve: override => permissionMode(config, override),
       find: findPermissionMode,
       privateOnly: ['bypassPermissions'],
       hint: 'bypassPermissions 可简写为 bypass',
+    },
+    // Unset defaults mean Claude Code's own choice (its settings), which the bridge does not know.
+    models: {
+      descriptions: modelAliases,
+      resolve: override => override || config.claudeModel,
+      find: findModel,
+      hint: '也可写完整模型名，如 claude-sonnet-5-5',
+    },
+    efforts: {
+      descriptions: effortLevels,
+      resolve: override => override || config.claudeEffort,
+      find: findEffort,
     },
     usage: () => runCliQuery({ bin: config.claudeBin, args: usageArgs(), input: '/usage', cwd: config.workspace, env, parse: parseEvent }),
     usageLabel: '查看 Claude 订阅用量和重置时间',

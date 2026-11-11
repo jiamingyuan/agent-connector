@@ -38,7 +38,11 @@ test('turn stats: context from the last main-chain call, plan limits, and per-tu
     modelUsage: { 'claude-sonnet-5-5': { inputTokens: 999999 } } });
   assert.deepEqual(result.stats, { turn: { output: 145, newInput: 13158, cacheRead: 60129 } });
   assert(turnArgs({ ...config, claudeEffort: 'max' }, null).join(' ').includes('--effort max'));
-  assert(!turnArgs(config, null).includes('--effort'));
+  assert(!turnArgs(config, null).includes('--effort') && !turnArgs(config, null).includes('--model'));
+  // A chat's /model and /effort choices win over the configured defaults.
+  const chosen = turnArgs({ ...config, claudeModel: 'opus', claudeEffort: 'max' }, null, { model: 'haiku', effort: 'low' }).join(' ');
+  assert(chosen.includes('--model haiku') && chosen.includes('--effort low'));
+  assert(turnArgs({ ...config, claudeModel: 'opus' }, null).join(' ').includes('--model opus'));
 });
 test('Cora can pre-approve web research without granting shell or editing permissions', () => {
   const args = turnArgs({ ...config, claudeAllowedTools: ['WebSearch', 'WebFetch'] }, 's1');

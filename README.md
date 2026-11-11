@@ -19,6 +19,8 @@
 | `/stop` | 停止当前任务，并清空这个聊天里排队的消息；已执行的操作不会撤销，会话上下文保留 | 立即 | 全部 |
 | `/new` | 开启新会话：在 `sessionDir`（默认是主目录，与终端里的 Claude Code 会话同处）新建，不再放进本项目的 `workspace/`；如果在其他会话里，先退出 | 排队 | 全部 |
 | `/mode [模式名]` | 不带参数时查看当前权限模式和全部选项，带参数时切换（见[权限模式](#权限模式)） | 排队 | Claude Code |
+| `/model [名称]` | 不带参数时查看这个聊天使用的模型和可选项，带参数时切换；`/model default` 恢复默认。Claude Code 可写别名（`fable`、`opus`、`sonnet`、`haiku`）或完整模型名。从下一条消息开始生效，只影响这个聊天，重启后保留 | 排队 | Claude Code、Codex |
+| `/effort [级别]` | 查看或切换推理深度（Claude Code：`low`、`medium`、`high`、`xhigh`、`max`）；`/effort default` 恢复默认。生效范围同 `/model` | 排队 | Claude Code、Codex |
 | `/rename [名称]` | 重命名当前会话；不写名称时根据对话内容自动生成。改名后，回复首行的会话名、`/sessions` 列表和终端的会话列表都会用新名字。调用 Claude Code 自带的 `/rename` | 排队 | Claude Code |
 | `/compact [要点]` | 压缩当前会话的上下文，回复压缩前后的 token 数；会话 ID 不变，之后的消息基于压缩后的摘要继续。可附上摘要里要保留的重点，如 `/compact 保留 newdash 的设计决定`。调用 Claude Code 自带的 `/compact` | 排队 | Claude Code |
 | `/usage` | 查询 Claude 订阅用量：当前会话窗口和本周的用量百分比与重置时间。调用本机 Claude Code 自带的 `/usage`，不消耗模型调用，也不保存会话 | 立即 | Claude Code |
@@ -117,7 +119,7 @@ lark-channel/     ◀──回复──  core/     ◀──最终回答──  
 | `core/` | 中枢 `hub.mjs`：按聊天排队、去重、回复发件箱与重试、聊天状态，以及上面全部指令。`cli-turn.mjs` 是命令行类 Agent 共用的进程运行器，`text.mjs` 负责回复拆分和会话名标题。不含任何渠道或 Agent 的细节。 |
 | `lark-channel/` | 飞书：`lark-cli` 长连接收 `im.message.receive_v1`、过滤非 owner 和过期消息、去掉 @机器人、发回复、加表情、下载图片。`lark-cli` 1.0.98 起拒绝把下载写到 `/root` 下，图片先下载到系统临时目录中的私有目录（700），检查格式和大小后复制到工作区 `attachments/`，再删除临时目录。 |
 | `claude-code-agent/` | Claude Code：运行对话、权限模式、`/rename`、`/compact`、`/usage`、本机会话列表与前情梗概。 |
-| `codex-agent/` | Codex：运行对话（仅文字），也是基于 `core/cli-turn.mjs` 的最小命令行 Agent 示例。 |
+| `codex-agent/` | Codex：运行对话（仅文字）、`/model`、`/effort`（这两项未用真实 Codex 验证），也是基于 `core/cli-turn.mjs` 的最小命令行 Agent 示例。 |
 | `service.mjs`、`service/` | 服务管理（systemd / launchd / 内置守护进程）与 `doctor` 检查，见[长期运行](#长期运行linux--macos)。 |
 | `example-agent/` | 模板：不依赖外部程序的回声 Agent，复制改名即可开始接入；也可配置 `"agent": "example"` 不花模型额度地测试渠道。 |
 
@@ -195,7 +197,8 @@ cp config.example.json config.json          # 或 Codex
 | `recallCheckMs` | 可选，处理一条消息期间每隔多久查一次它是否被撤回，单位毫秒，省略时为 5000；只用于没有撤回事件的渠道（如飞书）。 |
 | `allowGroupMentions` / `botOpenId` | 群聊默认关闭；开启时须提供本机器人正确的 open ID，并在飞书启用相应事件权限。 |
 | `replyFormat` | `card`：飞书卡片（见下）；`markdown`：飞书富文本，首行写会话名和权限模式；其他值为纯文本。 |
-| `claudeEffort` | 可选，Claude Code 的推理深度（如 `high`、`max`），以 `--effort` 传入并显示在卡片的模型标签上；省略时用 Claude Code 的默认值，标签只写模型名。 |
+| `claudeModel` | 可选，Claude Code 的默认模型（别名或完整模型名），以 `--model` 传入；省略时用 Claude Code 自己的设置。聊天里可用 `/model` 改。 |
+| `claudeEffort` | 可选，Claude Code 的默认推理深度（如 `high`、`max`），以 `--effort` 传入并显示在卡片的模型标签上；省略时用 Claude Code 自己的设置，标签只写模型名。聊天里可用 `/effort` 改。 |
 | `claudePermissionMode` | Claude Code 的默认权限模式，省略时为 `auto`，可选值见[权限模式](#权限模式)。 |
 | `claudeAllowedTools` | Claude Code 预先允许的工具列表，例如 `["WebSearch", "WebFetch"]`。 |
 

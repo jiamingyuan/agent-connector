@@ -43,6 +43,9 @@ export function createHub({ config, agent, channel, runtime, log }) {
   state.listings ||= {};
   // modes: chat ID -> permission mode chosen with /mode; absent means the configured default.
   state.modes ||= {};
+  // models, efforts: chat ID -> model / reasoning effort chosen with /model, /effort; absent means the default.
+  state.models ||= {};
+  state.efforts ||= {};
   // pendingFiles: chat ID -> files received but not yet handed to the agent (see receiveFiles).
   state.pendingFiles ||= {};
   // pendingDeletes: chat ID -> { id, at } of the session a /delete is waiting to have confirmed.
@@ -128,8 +131,9 @@ export function createHub({ config, agent, channel, runtime, log }) {
     let mode;
     if (agent.modes) { try { mode = agent.modes.resolve(state.modes[chatId]); } catch { /* invalid config */ } }
     const stats = current?.stats || {};
+    // The model shown is the one the session last ran on; the effort is the one in effect for the chat.
     return { title: current?.name || '新会话', mode: mode && { name: mode, risky: Boolean(agent.modes.privateOnly?.includes(mode)) },
-      model: stats.model, effort: stats.effort, context: stats.context, quota: state.quota, turn };
+      model: stats.model, effort: agent.efforts ? choice('effort', chatId) : stats.effort, context: stats.context, quota: state.quota, turn };
   }
   function reply(message, text, kind = 'answer', turn) {
     if (recalled.has(message.id)) return Promise.resolve();
@@ -223,7 +227,7 @@ export function createHub({ config, agent, channel, runtime, log }) {
   function runAgent(message, { images = [], files = [], outbox, target, turn = {} }) {
     const startedAt = Date.now();
     return track(message, agent.runTurn({ sessionId: target.id, cwd: target.cwd, text: composeText(message, target, files, outbox), images, files, outbox,
-      mode: state.modes[message.chatId], timeoutMs: config.turnTimeoutMs, turnKey: replyKey(message.id, 'output'),
+      mode: state.modes[message.chatId], model: state.models[message.chatId], effort: state.efforts[message.chatId], timeoutMs: config.turnTimeoutMs, turnKey: replyKey(message.id, 'output'),
       // The bridge's own instructions (workspace/CLAUDE.md) still apply when the chat's session runs elsewhere.
       instructionsFile: target.cwd !== config.workspace && fs.existsSync(path.join(config.workspace, 'CLAUDE.md')) ? path.join(config.workspace, 'CLAUDE.md') : undefined,
       onSession: id => rememberSession(message.chatId, target, id),
@@ -533,6 +537,42 @@ export function createHub({ config, agent, channel, runtime, log }) {
     } catch (error) { return `配置无效（${error.message}）`; }
   }
 
+  // ---- model and reasoning effort (/model, /effort) ----
+  // Per-chat choices like /mode, for any agent that offers them (agent.models, agent.efforts). The
+  // default is the agent's configured one, or whatever the agent itself uses when none is configured.
+  const choices = {
+    model: { part: agent.models, store: state.models, label: '模型', command: '/model' },
+    effort: { part: agent.efforts, store: state.efforts, label: '推理深度', command: '/effort' },
+  };
+  function choice(kind, chatId, own = true) {
+    const { part, store } = choices[kind];
+    try { return part?.resolve(own ? store[chatId] : undefined) || undefined; } catch { return undefined; }
+  }
+  const choiceName = value => value || `${agentName} 默认`;
+  function choiceOverview(kind, chatId) {
+    const { part, label, command } = choices[kind];
+    const current = choice(kind, chatId), fallback = choice(kind, chatId, false);
+    return [`当前${label}：${choiceName(current)}${current === fallback ? '（默认）' : `（${command} 切换）`}`, '',
+      ...Object.entries(part.descriptions).map(([name, text]) => `${name}${name === fallback ? '（默认）' : ''}：${text}`),
+      ...(Object.keys(part.descriptions).length ? [''] : []),
+      `发送 ${command} 名称 切换${part.hint ? `（${part.hint}）` : ''}，${command} default 恢复默认。只影响这个聊天的后续消息，重启后保留。`].join('\n');
+  }
+  function changeChoice(message, kind, query) {
+    const { part, store, label, command } = choices[kind];
+    if (!part) return reply(message, `${label}切换目前不支持 ${agentName}。`, kind);
+    if (!query) return reply(message, choiceOverview(kind, message.chatId), kind);
+    const current = choice(kind, message.chatId), fallback = choice(kind, message.chatId, false);
+    const reset = ['default', '默认'].includes(query.toLowerCase());
+    const value = reset ? fallback : part.find(query);
+    if (!reset && !value) return reply(message, `没有「${safeLabel(query)}」这个${label}。\n\n${choiceOverview(kind, message.chatId)}`, kind);
+    if (value === current) return reply(message, `当前${label}已经是 ${choiceName(value)}。`, kind);
+    if (value === fallback) delete store[message.chatId]; else store[message.chatId] = value;
+    save();
+    log(`${kind}_changed`, { chatId: message.chatId, messageId: message.id, [kind]: value || 'default' });
+    return reply(message, `已将${label}切换为 ${choiceName(value)}${value === fallback ? '（默认）' : ''}${part.descriptions[value] ? `：${part.descriptions[value]}` : ''}。从下一条消息开始生效${value === fallback ? '' : `，${command} default 可恢复默认`}。`, kind);
+  }
+  const choiceLabel = (kind, chatId) => `${choiceName(choice(kind, chatId))}${choices[kind].store[chatId] ? `（${choices[kind].command} 切换）` : '（默认）'}`;
+
   // ---- help and status ----
   function helpText() {
     const lines = [`私聊直接发文字${agent.capabilities.images ? '或图片（支持图文混合，每条最多 4 张）' : ''}即可与 ${agentName} 对话。`
@@ -540,6 +580,8 @@ export function createHub({ config, agent, channel, runtime, log }) {
       + (config.allowGroupMentions ? `\n群聊请 @${config.botName} 后发送请求或以下命令；只接受已授权用户，每个群使用独立上下文。` : ''),
     `/new：开新会话${sessions ? '（原来的会话仍在 /sessions 列表中）' : ''}`, '/status：查看状态', '/stop：停止当前任务并清空排队消息'];
     if (modes) lines.push(`/mode：查看或切换权限模式（${Object.keys(modes.descriptions).join('、')}）`);
+    if (agent.models) lines.push('/model [名称]：查看或切换这个聊天使用的模型');
+    if (agent.efforts) lines.push(`/effort [级别]：查看或切换推理深度（${Object.keys(agent.efforts.descriptions).join('、')}）`);
     if (agent.rename) lines.push('/rename [名称]：重命名当前会话；不写名称时根据对话内容自动生成');
     if (agent.compact) lines.push('/compact [要点]：压缩当前会话的上下文，可附上摘要里要保留的重点');
     if (agent.usage) lines.push(`/usage：${agent.usageLabel}`);
@@ -555,6 +597,8 @@ export function createHub({ config, agent, channel, runtime, log }) {
       `当前任务：${active.has(message.chatId) ? '运行中' : '空闲'}`, `单条任务时限：${Math.ceil(config.turnTimeoutMs / 60_000)} 分钟`,
       ...(state.pendingFiles[message.chatId]?.length ? [`待处理文件：${state.pendingFiles[message.chatId].length} 个，会随下一条消息交给 ${agentName}`] : []),
       ...(modes ? [`权限模式：${modeLabel(message.chatId)}`] : []),
+      ...(agent.models ? [`模型：${choiceLabel('model', message.chatId)}`] : []),
+      ...(agent.efforts ? [`推理深度：${choiceLabel('effort', message.chatId)}`] : []),
       `当前会话：${target.name || '新会话（未命名）'}`, `会话 ID：${target.id || '尚未创建'}`, `会话目录：${target.cwd}`,
       `工作区：${config.workspace}`].join('\n');
   }
@@ -603,6 +647,10 @@ export function createHub({ config, agent, channel, runtime, log }) {
     if (compactQuery !== null) return compactSession(message, compactQuery, generation);
     const modeQuery = commandArgs(text, '/mode');
     if (modeQuery !== null) return changeMode(message, modeQuery);
+    for (const kind of ['model', 'effort']) {
+      const query = commandArgs(text, choices[kind].command);
+      if (query !== null) return changeChoice(message, kind, query);
+    }
     const switchQuery = commandArgs(text, '/switch');
     if (switchQuery !== null) return switchSession(message, switchQuery, generation);
     const deleteQuery = sessions?.trash ? commandArgs(text, '/delete') : null;
