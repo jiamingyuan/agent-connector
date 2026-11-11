@@ -6,7 +6,7 @@
 
 ### 项目定位
 
-通过飞书官方 `lark-cli` 接收消息，调用本机 Claude Code 或 Codex，再以飞书机器人身份回复。当前实例是机器人 Sophia：Claude Code，只处理指定用户的私聊。
+通过飞书官方 `lark-cli` 接收消息，调用本机 Claude Code 或 Codex，再以飞书机器人身份回复。当前实例是机器人 Sophia 和 Cora：Claude Code，只处理指定用户的私聊。
 
 为什么做、服务谁之外的定位：待确认。
 
@@ -34,6 +34,7 @@
 | `/model`、`/effort` 按聊天切换模型和推理深度（Agent 可选功能，Claude Code 与 Codex 已接） | [V1.3](V1.3/iteration.md) |
 | 飞书卡片回复：标题区显示会话名、权限模式、模型与推理深度、context，正文上方是额度，底部是本轮用时与 token | [V1.3](V1.3/iteration.md) |
 | 撤回消息即中断：正在处理的停止、排队的跳过、不再回复 | [V1.3](V1.3/iteration.md) |
+| 多个机器人共用一个 Agent：一个会话同一时间只属于一个机器人；按机器人限定会话、权限模式、模型的范围；同一会话上的任务排队执行 | [V1.4](V1.4/iteration.md) |
 | `/usage` 查询订阅用量 | [V1.0](V1.0/iteration.md) |
 | `/compact`、`/rename`；失败时回复真实原因 | [V1.1](V1.1/iteration.md) |
 | 服务管理：Linux（systemd）、macOS（LaunchAgent）、其他环境内置守护进程；`doctor` 检查 | [V1.2](V1.2/iteration.md)，此前只支持 Debian |

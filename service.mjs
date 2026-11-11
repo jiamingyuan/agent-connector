@@ -9,6 +9,7 @@ import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { agentId, loadAgent, loadChannel } from './core/registry.mjs';
+import { botConfigs } from './core/bots.mjs';
 import { detectBackend, servicePath, systemdUnit, systemdUnitPath, launchdPlist, launchdPlistPath, launchctlArgs, UNIT,
   RESTART_DELAY_MS } from './service/units.mjs';
 import { runDoctor } from './service/doctor.mjs';
@@ -60,7 +61,8 @@ async function preflight() {
   const configFile = path.join(root, 'config.json');
   if (!fs.existsSync(configFile)) throw new Error('Missing config.json; copy config.claude.example.json or config.example.json first.');
   const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-  const bins = [...(await loadChannel(config)).requiredBins(config), ...(await loadAgent(config)).requiredBins(config)];
+  const bins = new Set((await loadAgent(config)).requiredBins(config));
+  for (const bot of botConfigs(config)) for (const bin of (await loadChannel(bot.config)).requiredBins(bot.config)) bins.add(bin);
   for (const bin of bins) fs.accessSync(bin, fs.constants.X_OK);
   if (!path.isAbsolute(config.workspace)) throw new Error('config.workspace must be an absolute path.');
   fs.mkdirSync(config.workspace, { recursive: true });

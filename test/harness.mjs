@@ -20,7 +20,8 @@ export const privateEvent = { type: 'im.message.receive_v1', sender_type: 'user'
   chat_type: 'p2p', chat_id: 'oc_private' };
 
 // build(root) writes any fixtures and returns { events, config, state, env, failSummary }. Events get
-// message IDs om_step_<index> and a fresh create_time. Returns what the bridge sent and ran.
+// message IDs om_step_<index> and a fresh create_time; an event with `profile` reaches only the bot
+// that listens with that lark-cli profile (default: fake), and each reply records the profile that sent it. Returns what the bridge sent and ran.
 export async function runBridge(t, build) {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'lark-bridge-test-')));
   let child;
@@ -40,13 +41,13 @@ export async function runBridge(t, build) {
   await fs.writeFile(path.join(root, 'fake.json'), JSON.stringify({ failSummary, driveDenied }));
   const fakeLark = path.join(root, 'lark');
   await fs.writeFile(fakeLark, `#!${process.execPath}
-const fs=require('fs'),path=require('path'),root=__dirname,args=process.argv.slice(2);
+const fs=require('fs'),path=require('path'),root=__dirname,args=process.argv.slice(2),profile=args[args.indexOf('--profile')+1];
 if(args.includes('consume')){
  process.stderr.write('[event] ready event_key=im.message.receive_v1\\n');
  const events=JSON.parse(fs.readFileSync(path.join(root,'events.json'),'utf8'));let next=0;
  setInterval(()=>{
   let answered=0;try{answered=fs.readFileSync(path.join(root,'replies.jsonl'),'utf8').trim().split('\\n').filter(Boolean).length;}catch{}
-  if(next<events.length&&answered>=next){console.log(JSON.stringify({...events[next],create_time:String(Date.now())}));next++;}
+  if(next<events.length&&answered>=next){const {profile:to='fake',...event}=events[next];if(to===profile)console.log(JSON.stringify({...event,create_time:String(Date.now())}));next++;}
  },25);
  process.stdin.resume();
 }else{
@@ -54,17 +55,17 @@ if(args.includes('consume')){
   // Like lark-cli: the file must be cwd-relative and outside /root.
   const name=args[args.indexOf('--file')+1];
   if(path.isAbsolute(name)||name.includes('..')||process.cwd().startsWith('/root'))return console.log(JSON.stringify({ok:false,error:{type:'validation',subtype:'invalid_argument'}}));
-  fs.appendFileSync(path.join(root,'replies.jsonl'),JSON.stringify({id:args[args.indexOf('--message-id')+1],format:'file',text:name,cwd:process.cwd(),content:fs.readFileSync(name,'utf8').slice(0,40)})+'\\n');
+  fs.appendFileSync(path.join(root,'replies.jsonl'),JSON.stringify({id:args[args.indexOf('--message-id')+1],profile,format:'file',text:name,cwd:process.cwd(),content:fs.readFileSync(name,'utf8').slice(0,40)})+'\\n');
   return console.log(JSON.stringify({ok:true,data:{}}));
  }
  if(args.includes('+messages-reply')&&args.includes('--msg-type')){
   const card=JSON.parse(args[args.indexOf('--content')+1]);
   if(card.header?.title?.content==='REJECT-CARD')return console.log(JSON.stringify({ok:false,error:{type:'api',code:230099,subtype:'invalid_card'}}));
-  fs.appendFileSync(path.join(root,'replies.jsonl'),JSON.stringify({id:args[args.indexOf('--message-id')+1],format:'card',card,text:card.body.elements.filter(e=>e.tag==='markdown').map(e=>e.content).join('\\n')})+'\\n');
+  fs.appendFileSync(path.join(root,'replies.jsonl'),JSON.stringify({id:args[args.indexOf('--message-id')+1],profile,format:'card',card,text:card.body.elements.filter(e=>e.tag==='markdown').map(e=>e.content).join('\\n')})+'\\n');
   return console.log(JSON.stringify({ok:true,data:{}}));
  }
  if(args.includes('+messages-reply')){const flag=args.includes('--markdown')?'--markdown':'--text';
-  fs.appendFileSync(path.join(root,'replies.jsonl'),JSON.stringify({id:args[args.indexOf('--message-id')+1],format:flag.slice(2),text:args[args.indexOf(flag)+1]})+'\\n');}
+  fs.appendFileSync(path.join(root,'replies.jsonl'),JSON.stringify({id:args[args.indexOf('--message-id')+1],profile,format:flag.slice(2),text:args[args.indexOf(flag)+1]})+'\\n');}
  if(args.includes('+upload')&&args.includes('drive')){
   // Like lark-cli: cwd-relative file outside /root; the app may lack the Drive scopes.
   const name=args[args.indexOf('--file')+1];

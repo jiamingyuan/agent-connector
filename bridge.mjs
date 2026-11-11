@@ -1,10 +1,12 @@
 // Entry point: reads config.json, loads the configured agent adapter (config.agent, e.g. claude-code)
-// and channel adapter (config.channel, e.g. lark) and connects them through the hub.
+// and one channel adapter per bot (config.channel, or each entry of config.bots) and connects them
+// through the hub.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHub } from './core/hub.mjs';
 import { loadAgent, loadChannel } from './core/registry.mjs';
+import { botConfigs } from './core/bots.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const config = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
@@ -39,8 +41,13 @@ function claimLock() {
 
 const context = { root, runtime, env, log };
 const agent = (await loadAgent(config)).createAgent(config, context);
-const channel = (await loadChannel(config)).createChannel(config, context);
-const hub = createHub({ config, agent, channel, runtime, log });
+// One channel instance per bot; a bot's log lines carry its id.
+const bots = [];
+for (const bot of botConfigs(config)) {
+  const botLog = bot.id ? (type, fields = {}) => log(type, { bot: bot.id, ...fields }) : log;
+  bots.push({ ...bot, channel: (await loadChannel(bot.config)).createChannel(bot.config, { ...context, log: botLog }) });
+}
+const hub = createHub({ config, agent, bots, runtime, log });
 
 claimLock();
 let stopping = false;
@@ -54,5 +61,5 @@ function shutdown(signal) {
 }
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
-log('started', { botName: config.botName, workspace: config.workspace, agent: agent.id, channel: channel.id });
+log('started', { botName: bots.map(bot => bot.name).join(', '), workspace: config.workspace, agent: agent.id, channel: [...new Set(bots.map(bot => bot.channel.id))].join(', ') });
 hub.start();

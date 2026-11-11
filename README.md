@@ -3,7 +3,7 @@
 把聊天平台上的消息交给本机的编码 Agent 处理，再以机器人身份回复。当前支持的消息渠道是飞书（通过官方 `lark-cli`），Agent 是 Claude Code 或 Codex；渠道和 Agent 都是可替换的模块，可以按[接口](#架构与接口)扩展到 Slack、微信等。
 
 - 只处理配置中指定用户（owner，可配置多人）的消息：默认只收私聊，可选择允许他们在群聊中真实 @机器人。
-- 每个聊天有独立的 Agent 会话，通过会话 ID 续接上下文；私聊、各个群互不读取。同一聊天的消息串行执行，按消息 ID 去重；没发出去的回复存在本地，自动重试。
+- 每个聊天有独立的 Agent 会话，通过会话 ID 续接上下文；私聊、各个群互不读取。同一聊天的消息串行执行，按消息 ID 去重；几个聊天进了同一个会话时，这个会话上的任务也一个个执行，后来的等前一个结束；没发出去的回复存在本地，自动重试。
 - 撤回一条消息，机器人就停止处理它：正在执行的任务被中断，还在排队的不再执行，也不再回复；已经做完的操作不会撤销，同一聊天里的其他消息照常处理。飞书上最多约 5 秒后生效。
 - 开始处理时在原消息上加一个敬礼表情。Claude Code 支持图片和图文消息（每条最多 4 张，单张 5 MiB、合计 6 MiB 以内，JPEG/PNG/GIF/WebP），支持飞书 Markdown 富文本回复；Codex 目前只收文字。
 - 可以发文件（PDF、文本、表格、文档等，单个最多 100 MiB），Agent 也能把改好或生成的文件发回来，见[文件](#文件)；语音、视频消息暂不支持。
@@ -106,6 +106,40 @@ Claude Code 默认使用 `auto` 模式。`config.json` 的 `claudePermissionMode
 - 会话正在终端执行任务时，不能切换进入，也不会执行发来的消息，以免两个进程同时写同一会话。终端只是打开着（空闲）时可以进入，但新对话不会出现在那个终端窗口：回终端继续前，先退出那个窗口，再用 `claude --resume` 重新打开。
 - 会话列表读取 `~/.claude/projects/`，终端状态读取 `~/.claude/sessions/<pid>.json`（设置了 `CLAUDE_CONFIG_DIR` 时改用该目录）。两者都是 Claude Code 的内部格式，读不到时只会少列会话或少标注终端状态。
 
+## 多个机器人
+
+一个 agent-connector 可以同时接多个机器人（每个是某个渠道上的一个机器人身份，例如一个飞书应用），它们共用同一个 Agent 和本机的会话。在 `config.json` 里加 `bots`，每项写这个机器人自己的设置，没写的沿用顶层：
+
+```json
+{
+  "agent": "claude-code",
+  "larkBin": "/absolute/path/to/lark-cli",
+  "claudeBin": "/absolute/path/to/claude",
+  "workspace": "/absolute/path/to/workspace",
+  "bots": [
+    { "name": "Assistant", "channel": "lark", "profile": "PROFILE_ONE", "ownerOpenId": "ou_USER_ID_IN_APP_ONE" },
+    { "name": "Helper", "channel": "lark", "profile": "PROFILE_TWO", "ownerOpenId": "ou_USER_ID_IN_APP_TWO",
+      "access": { "sessions": ["/srv/project"], "modes": ["auto", "plan"], "models": ["sonnet", "haiku"] } }
+  ]
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `name` | 机器人的名字（即单机器人配置里的 `botName`），必填，用于回复、提示和日志。 |
+| `id` | 可选，聊天状态里区分机器人用的标识，省略时用 `name`，不能含 `:`。改了它，这个机器人原有的聊天记录（当前会话、模式等）就对不上了。 |
+| 其他字段 | `channel`、`profile`、`ownerOpenId` / `ownerOpenIds`、`botOpenId`、`allowGroupMentions`、`replyFormat`、`sessionDir` 等，凡是顶层能写的都可以按机器人覆盖。飞书里同一个人在不同应用下的 open ID 不同，授权用户要按机器人分别填。 |
+| `access.sessions` | 这个机器人能列出、切换、删除和继续的会话：`"all"`（默认）、`"own"`（只限它自己开的）或目录列表（会话的工作目录在这些目录之内）。限定了目录时，新会话开在 `sessionDir`（在范围内时）或列表的第一个目录。 |
+| `access.modes` | 能用的权限模式：`"all"`（默认）或名单。默认模式不在名单里时，这个机器人以名单第一项为默认。 |
+| `access.models` | 能用 `/model` 选的模型：`"all"`（默认）或名单；规则同上。 |
+
+- 飞书：每个机器人是一个应用，在 `lark-cli` 里各有一个配置档（`lark-cli profile add --name <名字> --app-id <App ID> --app-secret-stdin`），`profile` 填配置档的名字；每个应用都要开启机器人能力并订阅接收消息事件。两个应用可以同时监听（`lark-cli` 1.0.99 实测）。
+- 每个机器人的聊天互相独立：各有各的当前会话、权限模式、模型和推理深度；同一个群里的两个机器人各自回复 @ 自己的消息。
+- 一个会话同一时间只属于一个机器人：某个机器人的聊天正开着的会话，别的机器人 `/switch` 不进去、也删不掉，会提示“正由机器人 X 开着”。那边发 `/new` 或 `/switch` 离开后才能进入。同一个机器人的不同聊天之间没有这个限制，它们在同一个会话里的任务排队执行。
+- 范围只限制机器人的指令能选什么，不是安全隔离：Agent 在本机的文件权限不变，被限定目录的机器人仍可以让 Agent 读写别处。
+- 从单机器人配置改成 `bots` 时，原有的聊天状态归 `bots` 里的第一个机器人。
+- `/status` 显示当前机器人的名字和它受限的范围；`runtime/status.json` 里多一项 `bots`，列出每个机器人是否连接正常。
+
 ## 架构与接口
 
 ```text
@@ -201,6 +235,7 @@ cp config.example.json config.json          # 或 Codex
 | `claudeEffort` | 可选，Claude Code 的默认推理深度（如 `high`、`max`），以 `--effort` 传入并显示在卡片的模型标签上；省略时用 Claude Code 自己的设置，标签只写模型名。聊天里可用 `/effort` 改。 |
 | `claudePermissionMode` | Claude Code 的默认权限模式，省略时为 `auto`，可选值见[权限模式](#权限模式)。 |
 | `claudeAllowedTools` | Claude Code 预先允许的工具列表，例如 `["WebSearch", "WebFetch"]`。 |
+| `bots` | 可选，同时接多个机器人，见[多个机器人](#多个机器人)。省略时就是上面这些字段描述的一个机器人。 |
 
 前台运行：
 

@@ -4,7 +4,7 @@
 
 ## 运行环境（本机实例）
 
-- 2026-11-10 起 Sophia 运行在宿主机上（原先在一个 Docker 容器里，那一份已停用；两份共用同一个飞书应用，不能同时运行）。以 systemd 系统服务 `agent-connector` 运行，开机自启；日志用 `node service.mjs logs` 查看，不再写入 `runtime/bridge.log`。
+- 2026-11-10 起 Sophia 运行在宿主机上（原先在一个 Docker 容器里，那一份已停用；两份共用同一个飞书应用，不能同时运行）。2026-11-11 起同一个服务接两个飞书机器人 Sophia 和 Cora（`config.json` 的 `bots`，各用一个 `lark-cli` 配置档，设置相同）。以 systemd 系统服务 `agent-connector` 运行，开机自启；日志用 `node service.mjs logs` 查看，不再写入 `runtime/bridge.log`。
 - 是否在运行以 `node service.mjs status` 为准：进程被强杀或主机重启后，`runtime/status.json` 可能仍写着 `ready: true`。
 - `config.json` 只在本机，不进仓库。
 - 飞书私聊可能用 `/switch` 接在终端正在用的 Claude Code 会话上，飞书那边的 Agent 也会改这个仓库，终端会话看不到这些改动。
