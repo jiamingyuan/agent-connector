@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { runCliTurn } from '../core/cli-turn.mjs';
+import { needsSession } from '../core/selftest.mjs';
 import { filterSessions, pickSession, timeAgo, formatSessionList } from '../core/session-list.mjs';
 import { sandboxModes, sandboxMode, findSandboxMode, effortLevels, findModel, findEffort, codexArgs, recapArgs, recapPrompt, parseEvent } from './cli.mjs';
 import { codexHome, listSessions, sessionStats, sessionDigest, promptName, recordFile, turnStats, usageText, trashSession } from './sessions.mjs';
@@ -65,6 +66,20 @@ export function createAgent(config, { env, runtime }) {
     // Unset defaults mean Codex's own configuration, which the bridge does not know.
     models: { descriptions: {}, resolve: override => override || config.codexModel, find: findModel, hint: '写 Codex 支持的模型名' },
     efforts: { descriptions: effortLevels, resolve: override => override || config.codexEffort, find: findEffort },
+    // Connection test (/test): the effort to try the switch with (no model: names change too often),
+    // and what only this agent knows how to check.
+    selfTest: {
+      effort: 'low',
+      checks: [
+        { id: 'record', title: '读取 Codex 的会话记录', when: needsSession, run(context) {
+          const file = recordFile(home, context.session.id);
+          if (!file) throw new Error('在 Codex 的会话目录里找不到测试会话的记录');
+          const stats = turnStats(home, context.session.id);
+          if (!stats.model && stats.context === undefined) throw new Error('记录能找到，但读不出模型和上下文大小，格式可能和预期的不一样');
+          return [stats.model, stats.quota && '含额度数据'].filter(Boolean).join('，');
+        } },
+      ],
+    },
     usage: async () => usageText(home),
     usageLabel: '查看 Codex 订阅额度（取自最近一次回答时的数据，不调用模型）',
     // Resolves to the session's new name; without a name, the start of its first prompt.

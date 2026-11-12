@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { replyParts, replyKey, safeLabel, splitMarkdown } from './text.mjs';
 import { accessOf, within } from './bots.mjs';
+import { agentChecks, channelChecks, agentContext, runChecks, formatReport, tally, skip } from './selftest.mjs';
 
 const LIST_LIMIT = 10;
 const SUMMARY_TIMEOUT_MS = 5 * 60_000;
@@ -60,6 +61,10 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
   state.pendingFiles ||= {};
   // pendingDeletes: chat ID -> { ids, at } of the sessions a /delete is waiting to have confirmed.
   state.pendingDeletes ||= {};
+  // selftest: which agents and bots have been offered the connection test, and their last results.
+  state.selftest ||= {};
+  state.selftest.agents ||= {};
+  state.selftest.bots ||= {};
   state.owners ||= {};
   // A config that gains `bots` keeps its chats: what was recorded before then belongs to the first bot.
   if (multi) for (const name of ['sessions', 'listings', 'modes', 'models', 'efforts', 'pendingFiles', 'pendingDeletes']) {
@@ -138,14 +143,16 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
   function flushLater() {
     sending = sending.catch(() => {}).then(flushOutbox).catch(error => log('outbox_error', { type: error.detail?.subtype || error.name }));
   }
+  // A temporary session (/temp) is named as such wherever the session's name is shown.
+  const sessionTitle = current => (current?.temp ? `临时会话${current.name ? `：${current.name}` : ''}` : current?.name || '新会话');
   // Header on every message: which session the chat is in and, for agents with permission modes,
   // the mode in effect, so a high-risk mode such as bypassPermissions is always visible.
   function header(message) {
     const current = state.sessions[message.chat];
     let mode;
     if (agent.modes) { try { mode = modeOf(message); } catch { /* invalid config: no note */ } }
-    if (!current?.name && !mode) return {};
-    const label = current?.name || '新会话';
+    if (!current?.name && !current?.temp && !mode) return {};
+    const label = sessionTitle(current);
     return { label, note: mode ? `${agent.modes.privateOnly?.includes(mode) ? '⚠️ ' : ''}${mode} mode` : '' };
   }
   // What a channel that draws its own header (channel.cards) gets with each reply: the session name,
@@ -156,7 +163,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     if (agent.modes) { try { mode = modeOf(message); } catch { /* invalid config */ } }
     const stats = current?.stats || {};
     // The model shown is the one the session last ran on; the effort is the one in effect for the chat.
-    return { title: current?.name || '新会话', mode: mode && { name: mode, risky: Boolean(agent.modes.privateOnly?.includes(mode)) },
+    return { title: sessionTitle(current), mode: mode && { name: mode, risky: Boolean(agent.modes.privateOnly?.includes(mode)) },
       model: stats.model, effort: agent.efforts ? choice('effort', message) : stats.effort, context: stats.context, quota: state.quota, turn };
   }
   function reply(message, text, kind = 'answer', turn) {
@@ -190,7 +197,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
   // default (sessionDir, the home dir unless configured), next to the user's terminal sessions.
   function chatTarget(message) {
     const current = state.sessions[message.chat];
-    return { id: current?.id, cwd: current?.cwd || newSessionDir(botOf(message)), name: current?.name, file: current?.file };
+    return { id: current?.id, cwd: current?.cwd || newSessionDir(botOf(message)), name: current?.name, file: current?.file, temp: Boolean(current?.temp) };
   }
   // A bot limited to some directories starts its sessions in sessionDir when that lies inside them,
   // else in the first of them. Without sessionDir an agent may name its own default (Codex: the
@@ -211,7 +218,8 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
       Object.assign(current, { id, updatedAt });
     } else state.sessions[chatId] = { id, cwd: target.cwd, updatedAt };
     // owners: session ID -> id of the bot whose chat started it (for bots limited to their own sessions).
-    if (!current) state.owners[id] = message.bot;
+    // A new session has no ID to continue; /temp leaves a record without one for it.
+    if (!target.id) state.owners[id] = message.bot;
     else if (target.id && target.id !== id && state.owners[target.id] !== undefined) state.owners[id] = state.owners[target.id];
     save();
   }
@@ -287,6 +295,44 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
       } }), 'agent');
   }
 
+  // ---- temporary sessions (/temp, /keep) ----
+  // A chat's session record carries `temp` from /temp until /keep. When the chat leaves such a
+  // session (/new, /temp, /switch) its record is moved to the trash like /delete does, unless
+  // something else still uses it. Returns what to tell the user about the session that was left.
+  function leaveSession(message, mention = true) {
+    const current = state.sessions[message.chat];
+    delete state.sessions[message.chat];
+    save();
+    if (!current?.temp) return mention && current?.name && sessions ? `已离开会话「${current.name}」，它仍在 /sessions 列表中。` : '';
+    if (!current.id) return ''; // nothing was said in it, so nothing exists
+    if (!sessions?.trash) return `已离开临时会话。${agentName} 不支持删除会话记录，它没有被删除。`;
+    if (Object.values(state.sessions).some(other => other?.id === current.id)) return '临时会话还有别的聊天在用，没有删除。';
+    if (sessions.running().has(current.id) && !sessionWork.has(current.id)) return '临时会话在终端里还开着，没有删除，它仍在 /sessions 列表中。';
+    try {
+      const session = sessions.list({ exclude: [] }).find(item => item.id === current.id);
+      if (!session) return '临时会话没有留下记录。';
+      sessions.trash(session, path.join(runtime, 'trash'));
+      log('temp_session_deleted', { chatId: message.chat, messageId: message.id });
+      return '临时会话已删除。';
+    } catch (error) {
+      log('session_delete_error', { type: error.code || error.name });
+      return `临时会话删除失败（${error.code || error.name}），它仍在 /sessions 列表中。`;
+    }
+  }
+  async function keepSession(message) {
+    const current = state.sessions[message.chat];
+    if (!current?.temp) return reply(message, current?.id ? '当前会话本来就是常规会话，不需要保留。' : '当前没有临时会话。发 /temp 开一个。', 'keep');
+    delete current.temp;
+    if (!current.id) {
+      delete state.sessions[message.chat]; save();
+      return reply(message, '这个临时会话还没有内容，已改成普通的新会话：下一条消息创建的会话会保留。', 'keep');
+    }
+    save();
+    log('temp_session_kept', { chatId: message.chat, messageId: message.id });
+    await reply(message, `已保留：这个会话现在是常规会话，离开后不会删除${sessions ? '，可以在 /sessions 里找到' : ''}。`, 'keep');
+    await autoName(message);
+  }
+
   // ---- /compact ----
   // Compacts the session this chat is in.
   async function compactSession(message, instructions, generation) {
@@ -314,7 +360,8 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
   // after an answer, through the agent's own rename with no name given (it picks one from the conversation).
   async function autoName(message) {
     const own = state.sessions[message.chat];
-    if (!agent.rename || !own?.id || own.name || own.autoNamed) return;
+    // A temporary session is named when it is kept (/keep), not before.
+    if (!agent.rename || !own?.id || own.name || own.autoNamed || own.temp) return;
     own.autoNamed = true;
     save();
     try {
@@ -476,7 +523,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     const shown = found.slice(0, LIST_LIMIT);
     state.listings[message.chat] = shown.map(session => session.id); save();
     return reply(message, sessions.format(shown, { total: found.length, running: sessions.running(),
-      current: own, query: safeLabel(query) }), 'sessions');
+      current: own, query: safeLabel(query), temporary: new Set(Object.values(state.sessions).filter(item => item?.temp && item.id).map(item => item.id)) }), 'sessions');
   }
   function fallbackRecap(file) {
     try {
@@ -519,6 +566,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     if (superseded(message, generation)) return;
     // The header shows the model and context as of the session's last answer until the next turn.
     const stats = sessions.stats?.(session.file);
+    const left = leaveSession(message, false);
     state.sessions[message.chat] = { id: session.id, cwd: session.cwd, name: session.name, file: session.file,
       updatedAt: new Date().toISOString(), ...(stats?.model ? { stats } : {}) };
     save(); status();
@@ -534,7 +582,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     }
     if (stopping) return;
     return reply(message, [
-      `已进入会话「${session.name}」\n目录：${session.cwd}\n最近活动：${sessions.ago(session.mtimeMs)}`,
+      `${left ? `${left}\n` : ''}已进入会话「${session.name}」\n目录：${session.cwd}\n最近活动：${sessions.ago(session.mtimeMs)}`,
       terminal && !ours && `注意：这个会话在终端里还开着。${where(message)}里的新对话不会出现在那个终端窗口；回终端继续前，先退出那个窗口，再运行 ${sessions.resumeHint(session.id)}。`,
       `前情梗概：\n${recap}`,
       '直接发消息即可在这个会话里继续。',
@@ -743,19 +791,134 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
   }
   const choiceLabel = (kind, message) => `${choiceName(choice(kind, message))}${choice(kind, message) === choice(kind, message, false) ? '（默认）' : `（${choices[kind].command} 切换）`}`;
 
+  // ---- connection test (/test) ----
+  // Checks the real agent and this bot's real channel feature by feature (core/selftest.mjs). The
+  // agent part runs in a session of its own; the channel part answers the message that asked for
+  // the test and, for receiving images and files and for withdrawn messages, asks the user to send
+  // something. While it runs, the chat's messages are kept for the test and what it did not use is
+  // handled afterwards. testing: chat ID -> { inbox, wake, stopped, context }.
+  const testing = new Map();
+  const botKey = bot => bot.id || 'default';
+  const testList = checks => checks.map(check => `${check.id} ${check.title}${check.manual ? '（只在点名时运行）' : ''}`).join('、');
+  function testOverview(message) {
+    const bot = botOf(message);
+    const last = record => (record?.last ? `${new Date(record.last.at).toISOString().slice(0, 16).replace('T', ' ')} UTC，通过 ${record.last.pass}、失败 ${record.last.fail}、跳过 ${record.last.skip}` : '还没有做过');
+    return [`接入测试用真实的 ${agentName} 和${where(message)}逐项检查功能是否可用，结果直接回复在这里。`,
+      `Agent（${agentName}）：${testList(agentChecks(agent))}`,
+      `渠道（${where(message)}）：${testList(channelChecks(bot.channel))}`,
+      '用法：/test all 全部；/test agent 只测 Agent；/test channel 只测渠道；/test 项目名 只测指定项，可写多个（如 /test image file）。',
+      `Agent 部分会进行约二十次很短的模型调用，大约 2 到 3 分钟，在一个单独的测试会话里进行，结束后删除这个会话。渠道部分里接收图片、接收文件、撤回这几项需要你按提示发消息，每项都可以回复“跳过”。测试期间发 /stop 可以停止；这个聊天里的其他消息会等测试结束后再处理。`,
+      `上次测试：Agent ${last(state.selftest.agents[agent.id])}；渠道 ${last(state.selftest.bots[botKey(bot)])}。`].join('\n');
+  }
+  // Asked once per agent and once per bot, in the first private chat after it was connected.
+  function offerTest(message, command) {
+    if (config.offerSelfTest === false || message.chatType !== 'private') return;
+    const bot = botOf(message);
+    const fresh = [!state.selftest.agents[agent.id] && `Agent ${agentName}`, !state.selftest.bots[botKey(bot)] && `${where(message)}机器人 ${bot.name || ''}`.trim()].filter(Boolean);
+    if (!fresh.length) return;
+    const agentIsNew = !state.selftest.agents[agent.id];
+    state.selftest.agents[agent.id] ||= { offeredAt: Date.now() };
+    state.selftest.bots[botKey(bot)] ||= { offeredAt: Date.now() };
+    save();
+    if (commandArgs(command, '/test') !== null) return;
+    void reply(message, `${fresh.join('和')}是第一次接入 agent-connector。要不要做一次接入测试，逐项确认功能可用？\n`
+      + `发 ${agentIsNew ? '/test all 开始（Agent 部分大约 2 到 3 分钟，会进行约二十次很短的模型调用）' : '/test channel 只测这个机器人的收发（不调用模型），或 /test all 连同 Agent 一起测'}；发 /test 先看测试项。\n`
+      + '不需要的话不用理会，这条提醒不会再出现。', 'test-offer').catch(logReplyError);
+  }
+  async function runTest(message, query, generation) {
+    const bot = botOf(message), { channel } = bot;
+    if (message.chatType !== 'private') return reply(message, '接入测试只能在私聊中进行。', 'test');
+    if (!query) return reply(message, testOverview(message), 'test');
+    if (/^(skip|跳过)$/i.test(query)) return reply(message, '好的，不做接入测试。之后想做时发 /test all。', 'test');
+    const wanted = query.toLowerCase().split(/[\s,，、]+/).filter(Boolean);
+    const all = wanted.includes('all') || wanted.includes('全部');
+    const pick = (checks, group) => checks.filter(check => wanted.includes(check.id) || ((all || wanted.includes(group)) && !check.manual));
+    const everyAgentCheck = agentChecks(agent), chosen = pick(everyAgentCheck, 'agent');
+    const channelList = pick(channelChecks(channel), 'channel');
+    if (!chosen.length && !channelList.length) return reply(message, `没有叫「${safeLabel(query)}」的测试项。\n${testOverview(message)}`, 'test');
+    // Single agent checks still need the test session, and it is removed again afterwards.
+    const agentList = chosen.length ? everyAgentCheck.filter(check => chosen.includes(check) || ['turn', 'delete'].includes(check.id)) : [];
+
+    const name = `selftest-${replyKey(message.uid, 'selftest').slice(0, 12)}`;
+    fs.mkdirSync(config.workspace, { recursive: true });
+    const workspace = fs.realpathSync(config.workspace);
+    const scratch = path.join(workspace, 'attachments', name), outbox = path.join(workspace, 'outbox', name);
+    for (const dir of [scratch, outbox]) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const run = { inbox: [], wake: null, stopped: false, context: null };
+    const job = { handle: { cancel() { run.stopped = true; run.context?.stop(); run.wake?.(); } } };
+    testing.set(message.chat, run); active.set(message.chat, job); status();
+    const halted = () => run.stopped || superseded(message, generation);
+    let notes = 0;
+    const say = text => reply(message, text, `test-note-${notes++}`);
+    log('selftest_started', { messageId: message.id, agentChecks: agentList.length, channelChecks: channelList.length });
+    try {
+      await say(`接入测试开始：${[agentList.length && `Agent ${agentList.length} 项`, channelList.length && `渠道 ${channelList.length} 项`].filter(Boolean).join('，')}。发 /stop 可以停止。`);
+      if (agentList.length) {
+        const context = agentContext({ agent, config, cwd: newSessionDir(bot), scratch, outbox });
+        context.trash = path.join(runtime, 'trash');
+        run.context = context;
+        const results = await runChecks(agentList, context, { stopped: halted });
+        run.context = null;
+        state.selftest.agents[agent.id] = { ...state.selftest.agents[agent.id], last: { at: Date.now(), ...tally(results) } }; save();
+        log('selftest_agent', tally(results));
+        const left = context.session.id && !context.session.deleted ? `\n测试会话${context.session.name ? `「${context.session.name}」` : ''}没有删除${sessions ? '，可以在 /sessions 里找到并用 /delete 删除' : ''}。` : '';
+        await reply(message, formatReport(`Agent：${agentName}`, results) + left, 'test-agent');
+      }
+      if (channelList.length) {
+        const context = {
+          channel, message, scratch,
+          entry: (kind, fields) => ({ messageId: message.id, chatId: message.chatId, ...(message.bot ? { bot: message.bot } : {}), kind: 'test-check',
+            key: replyKey(message.uid, `test-${kind}`), createdAt: Date.now(), ...fields }),
+          say,
+          // The next message of this chat that fits, or the check is skipped (see core/selftest.mjs).
+          async ask(text, accept, timeoutMs = 120_000) {
+            await say(text);
+            const deadline = Date.now() + timeoutMs;
+            for (;;) {
+              if (halted()) skip('测试已停止');
+              const next = run.inbox.shift();
+              if (!next) {
+                const left = deadline - Date.now();
+                if (left <= 0) skip(`等了 ${Math.round(timeoutMs / 60_000)} 分钟没有收到，跳过`);
+                await new Promise(resolve => { const timer = setTimeout(resolve, left); run.wake = () => { clearTimeout(timer); resolve(); }; });
+                run.wake = null;
+                continue;
+              }
+              if (/^(跳过|skip)$/i.test((next.text || '').trim())) skip('已按你的回复跳过');
+              if (accept(next)) return next;
+              await say('这一步需要的不是这种消息，请按上面的提示发送，或回复“跳过”。');
+            }
+          },
+        };
+        const results = await runChecks(channelList, context, { stopped: halted });
+        state.selftest.bots[botKey(bot)] = { ...state.selftest.bots[botKey(bot)], last: { at: Date.now(), ...tally(results) } }; save();
+        log('selftest_channel', tally(results));
+        await reply(message, formatReport(`渠道：${where(message)}${bot.name ? `（${bot.name}）` : ''}`, results), 'test-channel');
+      }
+    } finally {
+      testing.delete(message.chat);
+      if (active.get(message.chat) === job) { active.delete(message.chat); status(); }
+      for (const dir of [scratch, outbox]) fs.rmSync(dir, { recursive: true, force: true });
+      // What arrived during the test and the test did not use is handled now, in order.
+      for (const waiting of run.inbox) enqueue(waiting);
+    }
+  }
+
   // ---- help and status ----
   function helpText(message) {
     const bot = botOf(message), { channel } = bot;
     const lines = [`私聊直接发文字${agent.capabilities.images ? '或图片（支持图文混合，每条最多 4 张）' : ''}即可与 ${agentName} 对话。`
       + (agent.capabilities.files && channel.files ? `\n也可以发文件（单个最多 ${Math.round((channel.incomingFileBytes || 0) / 1024 / 1024)} MiB）：发完再说明要怎么处理，文件会随这条说明一起交给 ${agentName}。` : '')
       + (bot.config.allowGroupMentions ? `\n群聊请 @${bot.name} 后发送请求或以下命令；只接受已授权用户，每个群使用独立上下文。` : ''),
-    `/new：开新会话${sessions ? '（原来的会话仍在 /sessions 列表中）' : ''}`, '/status：查看状态', '/stop：停止当前任务并清空排队消息'];
+    `/new：开新会话${sessions ? '（原来的会话仍在 /sessions 列表中）' : ''}`,
+    '/temp：开临时会话，离开它时自动删除；/keep：把当前的临时会话保留为常规会话', '/status：查看状态', '/stop：停止当前任务并清空排队消息'];
     if (modes) lines.push(`/mode：查看或切换权限模式（${Object.keys(modes.descriptions).join('、')}）`);
     if (agent.models) lines.push('/model [名称]：查看或切换这个聊天使用的模型');
     if (agent.efforts) lines.push(`/effort [级别]：查看或切换推理深度（${Object.keys(agent.efforts.descriptions).join('、')}）`);
     if (agent.rename) lines.push('/rename [名称]：重命名当前会话；不写名称时根据对话内容自动生成');
     if (agent.compact) lines.push('/compact [要点]：压缩当前会话的上下文，可附上摘要里要保留的重点');
     if (agent.usage) lines.push(`/usage：${agent.usageLabel}`);
+    lines.push('/test [all | agent | channel | 项目名]：接入测试，用真实的 Agent 和渠道逐项检查功能是否可用（仅私聊）');
     if (sessions) lines.push(`/sessions：列出本机可切换的 ${agentName} 会话（仅私聊；/sessions all 包括脚本会话，/sessions 关键词 筛选）`,
       '/switch 编号：切换到列表中的任一会话，并收到前情梗概');
     if (sessions?.trash) lines.push('/delete 编号：删除列表中的会话，可一次写多个（如 1 3 5-7；需再次确认；终端的 /resume 里也会消失）');
@@ -771,7 +934,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
       ...(modes ? [`权限模式：${modeLabel(message)}`] : []),
       ...(agent.models ? [`模型：${choiceLabel('model', message)}`] : []),
       ...(agent.efforts ? [`推理深度：${choiceLabel('effort', message)}`] : []),
-      `当前会话：${target.name || '新会话（未命名）'}`, `会话 ID：${target.id || '尚未创建'}`, `会话目录：${target.cwd}`,
+      `当前会话：${target.name || '新会话（未命名）'}${target.temp ? '（临时会话，离开后自动删除；发 /keep 保留）' : ''}`, `会话 ID：${target.id || '尚未创建'}`, `会话目录：${target.cwd}`,
       `工作区：${config.workspace}`,
       ...(bot.access.sessions !== 'all' ? [`可访问的会话：${scopeText(bot).replace('它自己', '本机器人')}`] : []),
       ...(modes && bot.access.modes !== 'all' ? [`可用权限模式：${bot.access.modes.join('、')}`] : []),
@@ -814,10 +977,15 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     if (superseded(message, generation)) return;
     const text = (message.text || '').trim();
     if (text === '/new') {
-      const left = state.sessions[message.chat]?.name;
-      delete state.sessions[message.chat]; save();
-      return reply(message, `${left && sessions ? `已离开会话「${left}」，它仍在 /sessions 列表中。` : ''}已开启新会话，下一条消息会创建新的 ${agentName} 上下文。`, 'new');
+      const left = leaveSession(message);
+      return reply(message, `${left}已开启新会话，下一条消息会创建新的 ${agentName} 上下文。`, 'new');
     }
+    if (text === '/temp') {
+      const left = leaveSession(message);
+      state.sessions[message.chat] = { temp: true, cwd: newSessionDir(botOf(message)) }; save();
+      return reply(message, `${left}已开启临时会话，下一条消息会创建新的 ${agentName} 上下文。离开它时（/new、/temp${sessions ? '、/switch' : ''}）会自动删除；想留下来就发 /keep。`, 'temp');
+    }
+    if (text === '/keep') return keepSession(message);
     if (text === '/exit') return reply(message, '会话之间不再有主次，/exit 已取消：发 /switch 编号 切换到任一会话，或 /new 开新会话。', 'exit');
     const renameQuery = commandArgs(text, '/rename');
     if (renameQuery !== null) return renameSession(message, renameQuery, generation);
@@ -829,6 +997,8 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
       const query = commandArgs(text, choices[kind].command);
       if (query !== null) return changeChoice(message, kind, query);
     }
+    const testQuery = commandArgs(text, '/test');
+    if (testQuery !== null) return runTest(message, testQuery, generation);
     const switchQuery = commandArgs(text, '/switch');
     if (switchQuery !== null) return switchSession(message, switchQuery, generation);
     const deleteQuery = sessions?.trash ? commandArgs(text, '/delete') : null;
@@ -896,6 +1066,10 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
       void reply(message, job ? '已请求停止当前任务，排队消息已取消。会话上下文保留。' : '当前没有运行中的任务，排队消息已取消。', 'stop').catch(logReplyError);
       return;
     }
+    // While a connection test runs in this chat, its messages go to the test (see runTest).
+    const test = testing.get(message.chat);
+    if (test) { test.inbox.push(message); test.wake?.(); return; }
+    offerTest(message, command);
     if (command === '/usage') { void showUsage(message).catch(logReplyError); return; }
     // Listing only reads files, so it answers at once instead of waiting behind a running task.
     const sessionsQuery = commandArgs(command, '/sessions');
@@ -907,6 +1081,10 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
       }
       return;
     }
+    enqueue(message);
+  }
+  // Queues a message behind the earlier ones of its chat.
+  function enqueue(message) {
     if (processingCount >= 20) {
       void reply(message, '排队消息较多，请稍后再试，或发 /stop 取消当前任务。', 'busy').catch(() => {}); return;
     }

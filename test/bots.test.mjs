@@ -89,7 +89,7 @@ async function stubHub(t, access, saved) {
   const bot = (id, scope) => ({ id, name: id, config: { botName: id }, access: accessOf(scope),
     channel: { id: 'stub', displayName: 'Stub', richText: false, start(h) { handlers[id] = h; h.ready(); }, stop() {},
       send: async entry => { replies.push({ bot: id, ...entry }); }, isPermanentSendError: () => false, acknowledge: async () => {} } });
-  const hub = createHub({ config: { workspace: runtime, turnTimeoutMs: 5000 }, agent, bots: [bot('one'), bot('two', access)], runtime, log() {} });
+  const hub = createHub({ config: { offerSelfTest: false, workspace: runtime, turnTimeoutMs: 5000 }, agent, bots: [bot('one'), bot('two', access)], runtime, log() {} });
   hub.start();
   t.after(async () => { hub.shutdown(); await fs.rm(runtime, { recursive: true, force: true }); });
   const until = async count => { for (let i = 0; i < 200 && replies.length < count; i++) await new Promise(resolve => setTimeout(resolve, 10)); assert.equal(replies.length, count); };
@@ -139,7 +139,7 @@ test('two chats in the same session take turns; a queued one can still be stoppe
     } };
   const channel = { id: 'stub', displayName: 'Stub', richText: false, start(h) { handlers = h; h.ready(); }, stop() {},
     send: async entry => { replies.push(entry); }, isPermanentSendError: () => false, acknowledge: async () => {} };
-  const hub = createHub({ config: { workspace: runtime, turnTimeoutMs: 5000, botName: 'Cora' }, agent, channel, runtime, log() {} });
+  const hub = createHub({ config: { offerSelfTest: false, workspace: runtime, turnTimeoutMs: 5000, botName: 'Cora' }, agent, channel, runtime, log() {} });
   hub.start();
   t.after(async () => { hub.shutdown(); await fs.rm(runtime, { recursive: true, force: true }); });
   const send = (id, chatId, text) => handlers.message({ id, chatId, chatType: 'private', kind: 'text', text });

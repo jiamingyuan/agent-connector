@@ -3,6 +3,7 @@
 // (/sessions, /switch, /delete).
 import path from 'node:path';
 import { runCliTurn, runCliQuery } from '../core/cli-turn.mjs';
+import { needsSession } from '../core/selftest.mjs';
 import { permissionModes, permissionMode, findPermissionMode, modelAliases, findModel, effortLevels, findEffort, turnArgs, recapArgs, usageArgs, recapPrompt, turnInput,
   parseEvent, compactArgs, compactInput, parseCompactEvent, renameArgs, renameInput, parseRenameEvent } from './cli.mjs';
 import { claudeHome, listSessions, filterSessions, pickSession, runningSessions, sessionDigest, formatSessionList,
@@ -45,6 +46,20 @@ export function createAgent(config, { env: baseEnv }) {
       descriptions: effortLevels,
       resolve: override => override || config.claudeEffort,
       find: findEffort,
+    },
+    // Connection test (/test): the cheapest model and effort to try the switches with, and what
+    // only this agent knows how to check.
+    selfTest: {
+      model: 'haiku',
+      effort: 'low',
+      checks: [
+        { id: 'resume-list', title: '机器人开的会话出现在终端 /resume 列表', when: needsSession, run(context) {
+          const session = listSessions({ home, exclude: [] }).find(item => item.id === String(context.session.id).toLowerCase());
+          if (!session) throw new Error('在 Claude Code 的会话记录里找不到测试会话');
+          // Claude Code hides sessions recorded with the sdk entrypoint from the /resume picker.
+          if (session.headless) throw new Error('会话被记成了脚本会话，终端的 /resume 列表里不会显示');
+        } },
+      ],
     },
     usage: () => runCliQuery({ bin: config.claudeBin, args: usageArgs(), input: '/usage', cwd: config.workspace, env, parse: parseEvent }),
     usageLabel: '查看 Claude 订阅用量和重置时间',

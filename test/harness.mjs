@@ -153,7 +153,7 @@ process.stdin.on('data',x=>input+=x);process.stdin.on('end',()=>{
 `);
   await fs.writeFile(path.join(root, 'config.json'), JSON.stringify({
     backend: 'claude', profile: 'fake', ownerOpenId: 'ou_owner', botName: 'Cora', larkBin: fakeLark, claudeBin: fakeAgent,
-    replyFormat: 'markdown', workspace: root, sessionDir: root, maxEventAgeMs: 300_000, turnTimeoutMs: 10_000, ...config,
+    replyFormat: 'markdown', workspace: root, sessionDir: root, maxEventAgeMs: 300_000, turnTimeoutMs: 10_000, offerSelfTest: false, ...config,
   }));
   child = spawn(process.execPath, [path.join(root, 'bridge.mjs')], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: { ...process.env, ...env } });
   let diagnostic = '';

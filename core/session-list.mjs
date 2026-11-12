@@ -35,15 +35,16 @@ export function timeAgo(ms, now = Date.now()) {
   return `${Math.floor(minutes / 1440)} 天前`;
 }
 
-// `scripted` names the agent's non-interactive command in the closing hint.
-export function formatSessionList(shown, { total = shown.length, running = new Map(), current, query = '', now = Date.now(), scripted = 'claude -p' } = {}) {
+// `scripted` names the agent's non-interactive command in the closing hint; `temporary` holds the
+// IDs of sessions that will be deleted when their chat leaves them (/temp).
+export function formatSessionList(shown, { total = shown.length, running = new Map(), current, query = '', now = Date.now(), scripted = 'claude -p', temporary = new Set() } = {}) {
   const lines = [];
   if (!shown.length) lines.push(query ? `没有找到匹配「${query}」的会话。` : '还没有可切换的会话。');
   else {
     lines.push('会话（最近活动在前）：');
     for (const [index, session] of shown.entries()) {
       const terminal = running.get(session.id);
-      const marks = [session.id === current && '当前', terminal && (terminal.busy ? '终端执行中' : '终端打开中'),
+      const marks = [session.id === current && '当前', temporary.has(session.id) && '临时', terminal && (terminal.busy ? '终端执行中' : '终端打开中'),
         session.headless && !session.named && '脚本'].filter(Boolean);
       lines.push(`${index + 1}. ${session.name} · ${session.cwd} · ${timeAgo(session.mtimeMs, now)}${marks.map(mark => ' · ' + mark).join('')}`);
     }

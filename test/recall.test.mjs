@@ -28,7 +28,7 @@ async function setup(t, channelExtras = {}) {
     } };
   const channel = { id: 'stub', displayName: 'Stub', richText: false, start(h) { handlers = h; h.ready(); }, stop() {},
     send: async entry => { replies.push(entry); }, isPermanentSendError: () => false, acknowledge: async () => {}, ...channelExtras };
-  const hub = createHub({ config: { workspace: runtime, sessionDir: runtime, turnTimeoutMs: 5000, botName: 'Cora', recallCheckMs: 20 },
+  const hub = createHub({ config: { offerSelfTest: false, workspace: runtime, sessionDir: runtime, turnTimeoutMs: 5000, botName: 'Cora', recallCheckMs: 20 },
     agent, channel, runtime, log: (type, fields) => logs.push({ type, ...fields }) });
   hub.start();
   t.after(async () => { hub.shutdown(); await fs.rm(runtime, { recursive: true, force: true }); });

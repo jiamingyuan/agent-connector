@@ -83,10 +83,10 @@ export function createChannel(config, { root, env, log }) {
   }
 
   // A card Feishu refuses (malformed or too large) goes out once more as the Markdown post it replaces.
-  async function sendCard(entry) {
+  async function sendCard(entry, { strict = false } = {}) {
     try { return await runLark(cardReplyArgs(entry, buildCard(entry.text, entry.card))); }
     catch (error) {
-      if (!error.channel || error.detail?.type === 'network') throw error;
+      if (strict || !error.channel || error.detail?.type === 'network') throw error;
       log('card_rejected', { messageId: entry.messageId, code: error.detail?.code, subtype: error.detail?.subtype });
       return runLark(replyArgs({ ...entry, format: 'markdown', text: fallbackText(entry.text, entry.card), key: `${entry.key.slice(0, 36)}post` }));
     }
@@ -132,15 +132,17 @@ export function createChannel(config, { root, env, log }) {
     formatNote,
     start,
     stop() { stopped = true; clearTimeout(restartTimer); listener?.stdin.end(); stopProgram(listener); },
-    send: entry => (entry.file ? sendFile(entry) : entry.card ? sendCard(entry) : runLark(replyArgs(entry))),
+    // `strict` (used by the connection test): a refused card is an error instead of falling back to a post.
+    send: (entry, options) => (entry.file ? sendFile(entry) : entry.card ? sendCard(entry, options) : runLark(replyArgs(entry))),
     isPermanentSendError: error => error.permanent === true || PERMANENT_REPLY_ERRORS.has(error.detail?.code),
     // Up to 30 MB as a file reply (Feishu's limit, no empty files); larger ones as a Drive link.
     fileReplies: { maxBytes: CHAT_FILE_BYTES, linkMaxBytes: DRIVE_FILE_BYTES },
-    acknowledge: message => runLark(['im', 'reactions', 'create', '--as', 'bot',
+    // A failed reaction is only logged, unless `strict` asks for the error (the connection test does).
+    acknowledge: (message, { strict = false } = {}) => runLark(['im', 'reactions', 'create', '--as', 'bot',
       '--params', JSON.stringify({ message_id: message.id }),
       '--data', JSON.stringify({ reaction_type: { emoji_type: 'SaluteFace' } })], 10_000)
       .then(() => log('ack_reaction_added', { messageId: message.id, emojiType: 'SaluteFace' }))
-      .catch(error => log('ack_reaction_failed', { messageId: message.id, type: error.detail?.subtype || error.name })),
+      .catch(error => { log('ack_reaction_failed', { messageId: message.id, type: error.detail?.subtype || error.name }); if (strict) throw error; }),
     // lark-cli has no event for withdrawn messages, so the hub asks while a message is in flight.
     // Only the flag is read (--jq), never the message text.
     isRecalled: message => runLark(['api', 'GET', `/open-apis/im/v1/messages/${message.id}`, '--as', 'bot',
@@ -148,5 +150,21 @@ export function createChannel(config, { root, env, log }) {
     attachments: message => prepareImages(message.raw, config, runLark),
     files: message => prepareFiles(message.raw, config, runLark),
     incomingFileBytes: maxFileBytes(config),
+    // Connection test (/test): what only this channel knows how to check.
+    selfTest: {
+      checks: [
+        { id: 'fetch', title: '按 ID 读取消息（事件里缺图片或文件信息时用）', async run(context) {
+          const data = await runLark(['im', '+messages-mget', '--as', 'bot', '--message-ids', context.message.id, '--no-reactions']);
+          if (!data?.messages?.some(item => item.message_id === context.message.id)) throw new Error('读回的结果里没有这条消息');
+        } },
+        // Uploads a real 31 MB file to the bot's Drive space and leaves it there, so only on request.
+        { id: 'drive', title: '超过 30 MB 的文件经云空间发回', manual: true, timeoutMs: 15 * 60_000, async run(context) {
+          const file = path.join(context.scratch, '接入测试-大文件.bin');
+          fs.writeFileSync(file, ''); fs.truncateSync(file, CHAT_FILE_BYTES + 1024 * 1024);
+          await sendFile(context.entry('drive', { file, name: '接入测试-大文件.bin', userId: context.message.userId }));
+          return '已上传并发出链接；这个文件留在机器人的云空间里';
+        } },
+      ],
+    },
   };
 }

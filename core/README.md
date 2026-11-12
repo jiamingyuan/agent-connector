@@ -16,6 +16,7 @@
 | `core/bots.mjs` | 机器人列表：把 `config.bots` 解析成每个机器人的配置和访问范围。 |
 | `core/registry.mjs` | 模块登记表：名称 → 目录。 |
 | `core/cli-turn.mjs` | 命令行类 Agent 共用的进程运行器。 |
+| `core/selftest.mjs` | 接入测试（`/test`）：执行器，以及按接口功能生成的 Agent 和渠道测试项。 |
 | `core/session-list.mjs` | 提供会话列表的 Agent 共用的部分：筛选、按编号或名称选取、列表文字、把删除的会话移到回收目录。 |
 | `core/process.mjs` | 启动和结束外部程序：`start(bin, args, options)`、`stop(child)`。渠道或 Agent 要运行命令行工具时用它而不是直接 `spawn`，这样在 Windows 上也能启动 npm 装的工具、结束整个进程树，并且不经过 shell。 |
 | `core/text.mjs` | 回复拆分、会话名标题、幂等键、`safeLabel`。 |
@@ -149,12 +150,12 @@ runTurn: ({ sessionId, cwd, text, timeoutMs, onSession }) => runCliTurn({
 | `running()` | 返回 `Map<会话ID, { pid, busy }>`，表示正被其他进程（如终端）打开的会话；`busy` 时中枢拒绝进入和执行。 |
 | `digest(file)` | 返回 `{ prompt, reply }`：最近一轮的提问和回答摘录，梗概生成失败时使用。 |
 | `stats(file)` | 可选，返回 `{ model, context }`：会话最后一次回答时的模型和上下文大小，`/switch` 后用于卡片标题区。 |
-| `format(shown, { total, running, current, query })` | 返回 `/sessions` 的完整回复文字。 |
+| `format(shown, { total, running, current, query, temporary })` | 返回 `/sessions` 的完整回复文字。`temporary` 是临时会话（`/temp`）的 ID 集合，列表里应标出来。 |
 | `ago(mtimeMs)` | 返回“3 分钟前”这样的时间文字。 |
 | `resumeHint(id)` | 返回在终端里重新打开该会话的命令，用于提醒。 |
 | `fileFor(file, id)` | 可选，会话 ID 变化后返回新的记录文件路径。 |
 | `recap({ sessionId, cwd, timeoutMs })` | 生成前情梗概，返回与 `runTurn` 相同的 `{ cancel, result }`；不得改动原会话，也不得调用 `onSession`。 |
-| `trash(session, trashRoot)` | 可选，提供时启用 `/delete`：把会话记录移出 Agent 的会话目录、放到 `trashRoot` 下，返回 `{ trash, restoreTo }`。中枢负责确认、拒绝当前或正在使用的会话，并清掉聊天对它的引用；一次删除多个时，中枢对每个会话各调用一次。 |
+| `trash(session, trashRoot)` | 可选，提供时启用 `/delete`，临时会话（`/temp`）离开时的自动删除也用它：把会话记录移出 Agent 的会话目录、放到 `trashRoot` 下，返回 `{ trash, restoreTo }`。中枢负责确认、拒绝当前或正在使用的会话，并清掉聊天对它的引用；一次删除多个时，中枢对每个会话各调用一次。 |
 
 ### Agent 的约定
 
@@ -237,9 +238,44 @@ export function createChannel(config, context) {
 
 ### 其他方法
 
-- `acknowledge(message)`：表示“已开始处理”，例如加表情或已读回执；返回 Promise 且**不得拒绝**（失败自己记日志）。没有对应能力就返回 `Promise.resolve()`。
+- `acknowledge(message, { strict })`：表示“已开始处理”，例如加表情或已读回执；返回 Promise 且**不得拒绝**（失败自己记日志），只有 `strict` 为 true 时（接入测试）才把失败抛出来。没有对应能力就返回 `Promise.resolve()`。
 - `attachments(message)`：仅当 Agent 支持图片且 `kind` 为 `'image'` 或 `'rich'` 时调用，返回 `[{ path, mediaType, data }]`（没有图返回 `[]`）。文件建议存在 `config.workspace` 下的私有目录（平台工具不允许写入该目录时，先下载到 `os.tmpdir()` 下用 `mkdtemp` 建的私有目录，检查后再复制，参考 `lark-channel/images.mjs`）；遇到不支持的格式或超限时抛出带用户可读 `message` 的错误，中枢会原样回复。
 - `files(message)`：仅当 Agent 的 `capabilities.files` 为 true 且 `kind` 为 `'file'` 时调用，返回 `[{ path, name, size }]`：本地路径、处理过的安全文件名（单个路径分量）、字节数。下载方式与 `attachments` 相同（参考 `lark-channel/files.mjs`），超限、文件夹等情况抛出带用户可读 `message` 的错误。中枢收到后先回复“已收到文件”，把文件留到这个聊天的下一条普通消息再交给 Agent（文件和文字在飞书里是分开的两条消息）；那一轮成功后才清除，失败或被 `/stop` 时保留。
+
+## 接入测试：selfTest
+
+接入测试（`/test`，用户说明见 README）在真实运行的实例里逐项检查 Agent 和渠道。测试项分两层：
+
+- **通用测试项**在 `core/selftest.mjs` 里，按接口生成：Agent 提供了哪项功能就测哪项（没有提供的报告为跳过），渠道同理。新模块只要实现了接口，不用写任何代码就有这些测试。
+- **模块自己的测试项**由模块在 Agent 或渠道对象上用 `selfTest` 声明，放只有这个模块才知道怎么检查的东西。
+
+```js
+// Agent：createAgent 返回的对象上
+selfTest: {
+  model: 'haiku',        // 可选，“切换模型”一项用哪个模型试（挑最便宜的）；不写则跳过这一项
+  effort: 'low',         // 可选，“切换推理深度”一项用哪一级试；不写则用列出的第一级
+  stopAfterMs: 4000,     // 可选，“/stop”一项在任务开始多久后发出停止
+  checks: [ /* 测试项 */ ],
+},
+// 渠道：createChannel 返回的对象上
+selfTest: { checks: [ /* 测试项 */ ] },
+```
+
+一个测试项是 `{ id, title, run(context), when?, manual?, timeoutMs? }`：
+
+| 字段 | 含义 |
+| --- | --- |
+| `id`、`title` | 项目名（`/test 项目名` 里用，同一个 Agent 或渠道内不能重复）和报告里显示的名称。 |
+| `run(context)` | 正常返回即通过，返回的字符串作为备注显示；抛出错误即失败，`message` 作为原因显示；调用 `skip(原因)`（从 `core/selftest.mjs` 导入）即跳过。可以是异步函数。 |
+| `when(context)` | 可选，返回字符串表示这一项不适用（报告为跳过并显示这个原因）。Agent 的测试项依赖测试会话时用导出的 `needsSession`。 |
+| `manual` | 可选，为 true 时不包含在 `all`、`agent`、`channel` 里，只在点名时运行。用于代价高或会留下东西的检查。 |
+| `timeoutMs` | 可选，这一项最长运行时间，默认 6 分钟。 |
+
+Agent 测试项的 `context`：`agent`、`config`、`cwd`（测试会话的目录）、`session`（`{ id, name, file }`，由“对话”一项建立）、`stats`（各轮累计上报的统计）、`scratch`（工作区里放测试文件的私有目录）、`outbox`，以及 `ask(text, request?)`（在测试会话里跑一轮并返回回答，`request` 可带 `mode`、`model`、`effort`、`images`、`files` 等 `runTurn` 的参数）和 `wait(job)`（等一个 `{ cancel, result }`，使 `/stop` 和超时能中断它）。
+
+渠道测试项的 `context`：`channel`、`message`（发起测试的那条消息）、`scratch`、`entry(kind, fields)`（生成一条回复给这条消息的发件项，交给 `channel.send(entry, { strict: true })`）、`say(text)`（给用户发一句话）和 `ask(text, accept)`（显示请求，返回下一条满足 `accept(message)` 的消息；用户回复“跳过”或 2 分钟没有回应时跳过这一项）。
+
+为了让失败能被测出来，`send(entry, { strict })` 和 `acknowledge(message, { strict })` 在 `strict` 为 true 时不得吞掉错误或悄悄降级（例如飞书平时会把被拒绝的卡片改成富文本重发，`strict` 时直接报错）。
 
 ## 测试
 

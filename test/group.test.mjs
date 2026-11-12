@@ -60,7 +60,7 @@ process.stdin.on('data',x=>input+=x);process.stdin.on('end',()=>{
 });
 `);
   await fs.writeFile(path.join(root, 'config.json'), JSON.stringify({
-    backend: 'claude', profile: 'fake', ownerOpenId: 'ou_owner', botOpenId: 'ou_cora', allowGroupMentions: true,
+    backend: 'claude', profile: 'fake', ownerOpenId: 'ou_owner', botOpenId: 'ou_cora', allowGroupMentions: true, offerSelfTest: false,
     botName: 'Cora', larkBin: fakeLark, claudeBin: fakeAgent, workspace: root, maxEventAgeMs: 300_000, turnTimeoutMs: 1500,
   }));
   child = spawn(process.execPath, [path.join(root, 'bridge.mjs')], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
