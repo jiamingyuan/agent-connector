@@ -267,7 +267,7 @@ node service.mjs doctor     # 检查环境与依赖工具（见下）
 node service.mjs stop | start | uninstall
 ```
 
-- Windows（未在真机验证，见[测试](#测试)）：`config.json` 里的路径用正斜杠或双反斜杠，如 `"C:/Users/me/.local/bin/claude.exe"`。可执行文件可以写 `.exe`，也可以写 `where lark-cli` 查到的 npm 启动脚本（`lark-cli.cmd`，或不带扩展名）：桥接程序会找出它实际运行的脚本或程序直接启动，不经过 `cmd.exe`，消息内容因此不会被当成命令解释；找不出时会报错，请改填 `.exe` 或 `.js` 的路径。停止任务和停止服务时会结束整个进程树。也可以在 WSL 里按 Linux 方式运行。
+- Windows（测试在 GitHub 的 Windows 机器上通过；真实的 `lark-cli`、Claude Code 和登录后自启还没有在真机上试过）：`config.json` 里的路径用正斜杠或双反斜杠，如 `"C:/Users/me/.local/bin/claude.exe"`。可执行文件可以写 `.exe`，也可以写 `where lark-cli` 查到的 npm 启动脚本（`lark-cli.cmd`，或不带扩展名）：桥接程序会找出它实际运行的脚本或程序直接启动，不经过 `cmd.exe`，消息内容因此不会被当成命令解释；找不出时会报错，请改填 `.exe` 或 `.js` 的路径。停止任务和停止服务时会结束整个进程树。也可以在 WSL 里按 Linux 方式运行。
 - 项目原名 lark-agent-bridge。用旧版本装过 systemd 服务或 LaunchAgent 的，先用旧版本执行 `node service.mjs uninstall`（或删除 `lark-agent-bridge.service` / `com.lark-agent-bridge.plist`），再用新版本 `install`。
 - macOS 上 Node.js、`lark-cli`、`claude` 常装在 `/opt/homebrew/bin`，服务的 PATH 已包含它；`config.json` 里的可执行文件仍需写绝对路径（可用 `which claude` 查看）。
 - 使用 Claude Code 且工作区没有 `CLAUDE.md` 时，安装会从 `workspace/CLAUDE.example.md` 复制一份，已有文件不会被覆盖。

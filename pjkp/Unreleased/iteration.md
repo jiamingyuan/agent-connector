@@ -24,9 +24,13 @@ V1.4 之后、尚未命名版本的工作。
 ## 验证
 
 - `/delete` 批量：`test/delete.test.mjs` 新增一条测试；真实飞书未试。
-- Windows 适配：本机（Linux）`npm test` 87 条通过，新增 `test/process.test.mjs` 和守护进程真实启动、停止的测试；`node service.mjs doctor` 用真实配置通过。**没有在任何 Windows 机器上运行过**，Windows 专有的部分（`taskkill`、注册表、PowerShell 查进程命令行、`.cmd` 解析后的真实启动）只有参数生成被测到。测试工作流推送后才会运行。
+- Windows 适配：
+  - 本机（Linux）`npm test` 通过，`node service.mjs doctor` 用真实配置通过。
+  - GitHub 的测试工作流在 Linux、macOS、Windows 上都通过（`98d5182`，2026-11-12）。Windows 上 88 条里 86 条通过、2 条跳过（systemd 和 launchd 的配置文件测试）。第一次运行有 4 条失败，都是测试写死了 Unix 路径或进程号 1，产品代码没有改。
+  - Windows 上真实执行过的：用 `taskkill` 结束进程树、PowerShell 查进程命令行、守护进程的启动和停止、`install` / `uninstall` 写入和删除注册表启动项（这一条只在 CI 的 Windows 机器上运行）。
+  - 仍未验证：真实的 `lark-cli` 和 Claude Code 在 Windows 上的表现；真实的 `.cmd` 启动脚本（只测了解析）；重新登录后是否真的自启；真实飞书消息。这些需要一台真实的 Windows 机器。
 
 ## 当前状态
 
 - `/delete` 批量：已推送到 `main`（`f965fe1`），没有打标签；本机服务 2026-11-12 07:47（UTC）重启后生效。
-- Windows 适配：只改在工作区，本机服务还在运行改动前的代码，下次重启才会用上新代码。
+- Windows 适配：已推送到 `main`（`47b8da6`、`4c54a5f`、`98d5182`），没有打标签。

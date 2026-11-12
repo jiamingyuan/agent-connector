@@ -37,7 +37,7 @@
 | 多个机器人共用一个 Agent：一个会话同一时间只属于一个机器人；按机器人限定会话、权限模式、模型的范围；同一会话上的任务排队执行 | [V1.4](V1.4/iteration.md) |
 | `/usage` 查询订阅用量 | [V1.0](V1.0/iteration.md) |
 | `/compact`、`/rename`；失败时回复真实原因 | [V1.1](V1.1/iteration.md) |
-| 服务管理：Linux（systemd）、macOS（LaunchAgent）、其他环境内置守护进程；`doctor` 检查 | [V1.2](V1.2/iteration.md)，此前只支持 Debian |
+| 服务管理：Linux（systemd）、macOS（LaunchAgent）、Windows 与其他环境内置守护进程；`doctor` 检查 | [V1.2](V1.2/iteration.md)，此前只支持 Debian；Windows 见 [Unreleased](Unreleased/iteration.md) |
 | 接收文件消息（随下一条消息交给 Agent，可读类型见 README）；Agent 存进发件目录的文件随回答发回，超过 30 MB 的经云空间发链接（受租户单文件上限约束） | [V1.2](V1.2/iteration.md) |
 | 多个授权用户 `ownerOpenIds` | [V1.2](V1.2/iteration.md) |
 | MIT 许可证 | [V1.2](V1.2/iteration.md) |
