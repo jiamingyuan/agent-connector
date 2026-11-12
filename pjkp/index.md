@@ -11,7 +11,7 @@
 
 ## 版本
 
-- [Unreleased](Unreleased/iteration.md)：`/delete` 一次删除多个会话；Windows 适配（测试通过，真机未试）；补全 Codex 模块（未用真实 Codex 运行）；接入测试 `/test`、项目规则与功能模块表、临时会话 `/temp`（未提交，版本号待定）。
+- [Unreleased](Unreleased/iteration.md)：`/delete` 一次删除多个会话；Windows 适配（测试通过，真机未试）；补全 Codex 模块（未用真实 Codex 运行）；接入测试 `/test`、项目规则与功能模块表、临时会话 `/temp`（`a8ed4b6`，已推送，版本号待定）。
 - [V1.4](V1.4/iteration.md)：多个机器人共用一个 Agent、一个会话同一时间只属于一个机器人、按机器人限定会话 / 权限模式 / 模型范围、同一会话上的任务排队。
 - [V1.3](V1.3/iteration.md)：会话不分主次（取消默认会话与 `/exit`）；飞书卡片回复（模式、模型、context、额度、本轮 token）；撤回消息即中断；`/model`、`/effort`。
 - [V1.2](V1.2/iteration.md)：多系统服务与 `doctor`、多用户、MIT、回复首行显示权限模式、改名 agent-connector；收发文件；单一会话列表、新会话放在 Claude Code 默认位置并可在终端 `/resume` 找到、自动起名、`/delete`；大文件经云空间发链接（受租户上限约束）、默认会话按名字称呼。
