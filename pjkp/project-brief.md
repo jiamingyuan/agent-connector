@@ -51,4 +51,5 @@
 | 渠道（channel） | 消息接收端，如飞书；目录 `<名称>-channel/` |
 | Agent 适配器（agent） | 运行对话的一端，如 Claude Code、Codex；目录 `<名称>-agent/` |
 | 中枢（hub） | `core/`，连接两端，负责排队、发件箱、状态和指令 |
+| 机器人（bot） | 某个渠道上的一个机器人身份，例如一个飞书应用；用户也称 channel agent。一个服务可以接多个，共用同一个 Agent（见 [V1.4](V1.4/iteration.md)） |
 | 权限模式 | Claude Code 的 `--permission-mode`。桥接程序始终带 `--permission-prompts none`，需要确认的操作一律拒绝 |
