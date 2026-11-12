@@ -1,6 +1,6 @@
 # agent-connector 项目简介
 
-记录：2026-11-11，对应 [V1.4](V1.4/iteration.md)。功能、配置、命令和部署细节以 [README](../README.md) 为准；各项的用户原话、决定状态与验证见对应版本记录。
+记录：2026-11-12，对应 [V1.5](V1.5/iteration.md)。功能、配置、命令和部署细节以 [README](../README.md) 为准；各项的用户原话、决定状态与验证见对应版本记录。
 
 ## 项目介绍
 
@@ -29,15 +29,18 @@
 | 每个聊天独立会话，串行执行、去重、回复失败重试；`/new`、`/status`、`/stop`、`/help`；Claude Code 收图片、Markdown 回复 | 首次导入起；图片适配 `lark-cli` 1.0.98 见 [V1.1](V1.1/iteration.md) |
 | 渠道与 Agent 模块化、接入指南、`example-agent/` 模板 | [V1.0](V1.0/iteration.md) |
 | 可选会话 `/sessions`、`/switch`，进入时发前情梗概 | [V1.0](V1.0/iteration.md)；单一列表见 [V1.2](V1.2/iteration.md)；会话不分主次、取消 `/exit` 见 [V1.3](V1.3/iteration.md) |
-| 新会话放在 Claude Code 默认位置并可在终端 `/resume` 找到；自动起名；`/delete` 删除会话（移到回收目录） | [V1.2](V1.2/iteration.md) |
+| 新会话放在 Claude Code 默认位置并可在终端 `/resume` 找到；自动起名；`/delete` 删除会话（移到回收目录） | [V1.2](V1.2/iteration.md)；一次删除多个见 [V1.5](V1.5/iteration.md) |
 | 默认权限模式 `auto`，`/mode` 按聊天切换；每条回复首行显示会话名与模式 | [V1.0](V1.0/iteration.md)；首行显示见 [V1.2](V1.2/iteration.md) |
 | `/model`、`/effort` 按聊天切换模型和推理深度（Agent 可选功能，Claude Code 与 Codex 已接） | [V1.3](V1.3/iteration.md) |
 | 飞书卡片回复：标题区显示会话名、权限模式、模型与推理深度、context，正文上方是额度，底部是本轮用时与 token | [V1.3](V1.3/iteration.md) |
 | 撤回消息即中断：正在处理的停止、排队的跳过、不再回复 | [V1.3](V1.3/iteration.md) |
 | 多个机器人共用一个 Agent：一个会话同一时间只属于一个机器人；按机器人限定会话、权限模式、模型的范围；同一会话上的任务排队执行 | [V1.4](V1.4/iteration.md) |
+| 临时会话 `/temp`：离开时自动删除，`/keep` 保留为常规会话 | [V1.5](V1.5/iteration.md) |
+| 接入测试 `/test`：用真实的 Agent 和渠道逐项检查功能；Agent 或机器人第一次接入时询问一次 | [V1.5](V1.5/iteration.md) |
+| Codex 模块与 Claude Code 模块功能对齐（`/compact` 除外） | [V1.5](V1.5/iteration.md)，未用真实 Codex 运行 |
 | `/usage` 查询订阅用量 | [V1.0](V1.0/iteration.md) |
 | `/compact`、`/rename`；失败时回复真实原因 | [V1.1](V1.1/iteration.md) |
-| 服务管理：Linux（systemd）、macOS（LaunchAgent）、Windows 与其他环境内置守护进程；`doctor` 检查 | [V1.2](V1.2/iteration.md)，此前只支持 Debian；Windows 见 [Unreleased](Unreleased/iteration.md) |
+| 服务管理：Linux（systemd）、macOS（LaunchAgent）、Windows 与其他环境内置守护进程；`doctor` 检查 | [V1.2](V1.2/iteration.md)，此前只支持 Debian；Windows 见 [V1.5](V1.5/iteration.md) |
 | 接收文件消息（随下一条消息交给 Agent，可读类型见 README）；Agent 存进发件目录的文件随回答发回，超过 30 MB 的经云空间发链接（受租户单文件上限约束） | [V1.2](V1.2/iteration.md) |
 | 多个授权用户 `ownerOpenIds` | [V1.2](V1.2/iteration.md) |
 | MIT 许可证 | [V1.2](V1.2/iteration.md) |
