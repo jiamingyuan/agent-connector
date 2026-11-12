@@ -67,7 +67,7 @@ export function createAgent(config, context) {
 | 参数 | 类型 | 含义 |
 | --- | --- | --- |
 | `sessionId` | string \| undefined | 要续接的会话 ID；这个聊天第一轮或 `/new` 之后为 `undefined`，此时新建会话。 |
-| `cwd` | string | 本轮的工作目录：当前会话自己的目录；新会话为 `config.sessionDir`（默认主目录；早先版本创建的会话为 `config.workspace`）。只支持固定目录的 Agent 可以忽略。 |
+| `cwd` | string | 本轮的工作目录：当前会话自己的目录；新会话为用户在 `/new 目录` 里指定的目录，其次是这个聊天用 `/dir` 设置的目录，都没有时为 `config.sessionDir`（默认主目录；早先版本创建的会话为 `config.workspace`）。只支持固定目录的 Agent 可以忽略。 |
 | `text` | string | 发给 Agent 的完整文字。中枢已在用户原文后附加以 `\n\n[桥接` 开头的说明块（群聊范围、当前工作目录、渠道的回复格式要求），原样送入即可。 |
 | `images` | array | `capabilities.images` 为 true 且消息带图时为 `[{ path, mediaType, data }]`（本地文件路径、MIME 类型、base64 内容），否则为 `[]`。 |
 | `mode` | string \| undefined | 这个聊天用 `/mode` 选的模式；`undefined` 表示用默认值。没有 `modes` 的 Agent 忽略。 |

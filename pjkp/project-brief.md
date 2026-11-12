@@ -36,6 +36,7 @@
 | 撤回消息即中断：正在处理的停止、排队的跳过、不再回复 | [V1.3](V1.3/iteration.md) |
 | 多个机器人共用一个 Agent：一个会话同一时间只属于一个机器人；按机器人限定会话、权限模式、模型的范围；同一会话上的任务排队执行 | [V1.4](V1.4/iteration.md) |
 | 临时会话 `/temp`：离开时自动删除，`/keep` 保留为常规会话 | [V1.5](V1.5/iteration.md) |
+| 指定会话目录：`/dir 目录` 设定这个聊天的新会话目录（群聊可用），`/new 目录`、`/temp 目录` 只对这一个会话生效 | [V1.5](V1.5/iteration.md) |
 | 接入测试 `/test`：用真实的 Agent 和渠道逐项检查功能；Agent 或机器人第一次接入时询问一次 | [V1.5](V1.5/iteration.md) |
 | Codex 模块与 Claude Code 模块功能对齐（`/compact` 除外） | [V1.5](V1.5/iteration.md)，未用真实 Codex 运行 |
 | `/usage` 查询订阅用量 | [V1.0](V1.0/iteration.md) |

@@ -61,13 +61,15 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
   state.pendingFiles ||= {};
   // pendingDeletes: chat ID -> { ids, at } of the sessions a /delete is waiting to have confirmed.
   state.pendingDeletes ||= {};
+  // dirs: chat ID -> the directory this chat's new sessions start in (/dir).
+  state.dirs ||= {};
   // selftest: which agents and bots have been offered the connection test, and their last results.
   state.selftest ||= {};
   state.selftest.agents ||= {};
   state.selftest.bots ||= {};
   state.owners ||= {};
   // A config that gains `bots` keeps its chats: what was recorded before then belongs to the first bot.
-  if (multi) for (const name of ['sessions', 'listings', 'modes', 'models', 'efforts', 'pendingFiles', 'pendingDeletes']) {
+  if (multi) for (const name of ['sessions', 'listings', 'modes', 'models', 'efforts', 'pendingFiles', 'pendingDeletes', 'dirs']) {
     for (const key of Object.keys(state[name])) if (!key.includes(':')) { state[name][`${firstBot.id}:${key}`] = state[name][key]; delete state[name][key]; }
   }
   const seen = new Set(state.seen);
@@ -197,7 +199,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
   // default (sessionDir, the home dir unless configured), next to the user's terminal sessions.
   function chatTarget(message) {
     const current = state.sessions[message.chat];
-    return { id: current?.id, cwd: current?.cwd || newSessionDir(botOf(message)), name: current?.name, file: current?.file, temp: Boolean(current?.temp) };
+    return { id: current?.id, cwd: current?.cwd || chatDir(message), name: current?.name, file: current?.file, temp: Boolean(current?.temp) };
   }
   // A bot limited to some directories starts its sessions in sessionDir when that lies inside them,
   // else in the first of them. Without sessionDir an agent may name its own default (Codex: the
@@ -293,6 +295,47 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
         recordStats(message.chat, target, stats);
         if (stats.turn) Object.assign(turn, stats.turn, { seconds: Math.round((Date.now() - startedAt) / 1000) });
       } }), 'agent');
+  }
+
+  // ---- the chat's directory (/dir) ----
+  // A session runs in the directory it was started in, for good. /dir sets where this chat's new
+  // sessions start, and starts one there: a group (which cannot /switch) is tied to a project's
+  // directory this way, and a private chat gets a session in a directory without leaving the chat.
+  const chatDir = message => state.dirs[message.chat] || newSessionDir(botOf(message));
+  // The directory a user named for a session: an existing one, and inside the bot's directories
+  // when it is limited to some. Returns { dir } or { problem } (what to tell the user).
+  function directoryFor(message, text) {
+    const bot = botOf(message);
+    let dir = text === '~' || text.startsWith('~/') ? path.join(os.homedir(), text.slice(1)) : text;
+    if (!path.isAbsolute(dir)) return { problem: '请写完整的目录路径，如 /srv/project 或 ~/project。' };
+    dir = path.resolve(dir);
+    let found = false;
+    try { found = fs.statSync(dir).isDirectory(); } catch { /* missing */ }
+    if (!found) return { problem: `本机没有目录 ${safeLabel(dir, 120)}。请先建好这个目录。` };
+    const scope = bot.access.sessions;
+    if (Array.isArray(scope) && !scope.some(base => within(dir, base))) return { problem: `机器人 ${bot.name} 只能在这些目录里开会话：${scope.join('、')}。` };
+    return { dir };
+  }
+  function changeDir(message, query) {
+    const bot = botOf(message), fallback = newSessionDir(bot);
+    const current = state.sessions[message.chat];
+    if (!query) {
+      return reply(message, [`这个聊天的新会话目录：${chatDir(message)}${state.dirs[message.chat] ? '' : '（默认）'}`,
+        current?.id ? `当前会话在 ${current.cwd} 里运行，会话的目录不会变。` : '',
+        '发 /dir 目录 设置并开新会话，如 /dir /srv/project；/dir default 恢复默认。'].filter(Boolean).join('\n'), 'dir');
+    }
+    let dir = fallback;
+    const reset = /^(default|默认)$/i.test(query);
+    if (!reset) {
+      const found = directoryFor(message, query);
+      if (found.problem) return reply(message, found.problem, 'dir');
+      dir = found.dir;
+    }
+    const left = leaveSession(message);
+    if (reset) delete state.dirs[message.chat]; else state.dirs[message.chat] = dir;
+    save();
+    log('chat_dir_changed', { chatId: message.chat, messageId: message.id, reset });
+    return reply(message, `${left}${reset ? `已恢复默认：这个聊天的新会话在 ${dir} 里开始。` : `已设置：这个聊天的新会话都在 ${dir} 里开始，直到再次修改。`}已开启新会话，下一条消息会在这个目录里创建新的 ${agentName} 上下文。`, 'dir');
   }
 
   // ---- temporary sessions (/temp, /keep) ----
@@ -910,8 +953,9 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     const lines = [`私聊直接发文字${agent.capabilities.images ? '或图片（支持图文混合，每条最多 4 张）' : ''}即可与 ${agentName} 对话。`
       + (agent.capabilities.files && channel.files ? `\n也可以发文件（单个最多 ${Math.round((channel.incomingFileBytes || 0) / 1024 / 1024)} MiB）：发完再说明要怎么处理，文件会随这条说明一起交给 ${agentName}。` : '')
       + (bot.config.allowGroupMentions ? `\n群聊请 @${bot.name} 后发送请求或以下命令；只接受已授权用户，每个群使用独立上下文。` : ''),
-    `/new：开新会话${sessions ? '（原来的会话仍在 /sessions 列表中）' : ''}`,
-    '/temp：开临时会话，离开它时自动删除；/keep：把当前的临时会话保留为常规会话', '/status：查看状态', '/stop：停止当前任务并清空排队消息'];
+    `/new [目录]：开新会话${sessions ? '（原来的会话仍在 /sessions 列表中）' : ''}；写了目录就在那个目录里开`,
+    '/dir [目录]：查看或设置这个聊天的新会话在哪个目录里开始（设置后立即开新会话；/dir default 恢复默认）',
+    '/temp [目录]：开临时会话，离开它时自动删除；/keep：把当前的临时会话保留为常规会话', '/status：查看状态', '/stop：停止当前任务并清空排队消息'];
     if (modes) lines.push(`/mode：查看或切换权限模式（${Object.keys(modes.descriptions).join('、')}）`);
     if (agent.models) lines.push('/model [名称]：查看或切换这个聊天使用的模型');
     if (agent.efforts) lines.push(`/effort [级别]：查看或切换推理深度（${Object.keys(agent.efforts.descriptions).join('、')}）`);
@@ -935,6 +979,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
       ...(agent.models ? [`模型：${choiceLabel('model', message)}`] : []),
       ...(agent.efforts ? [`推理深度：${choiceLabel('effort', message)}`] : []),
       `当前会话：${target.name || '新会话（未命名）'}${target.temp ? '（临时会话，离开后自动删除；发 /keep 保留）' : ''}`, `会话 ID：${target.id || '尚未创建'}`, `会话目录：${target.cwd}`,
+      ...(state.dirs[message.chat] ? [`新会话目录：${state.dirs[message.chat]}（用 /dir 设置的）`] : []),
       `工作区：${config.workspace}`,
       ...(bot.access.sessions !== 'all' ? [`可访问的会话：${scopeText(bot).replace('它自己', '本机器人')}`] : []),
       ...(modes && bot.access.modes !== 'all' ? [`可用权限模式：${bot.access.modes.join('、')}`] : []),
@@ -976,16 +1021,23 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     const { channel } = botOf(message);
     if (superseded(message, generation)) return;
     const text = (message.text || '').trim();
-    if (text === '/new') {
+    // /new and /temp may name the directory for this one session; the chat's own directory (/dir) stays.
+    for (const [name, temp] of [['/new', false], ['/temp', true]]) {
+      const where = commandArgs(text, name);
+      if (where === null) continue;
+      const kind = name.slice(1);
+      const chosen = where ? directoryFor(message, where) : {};
+      if (chosen.problem) return reply(message, chosen.problem, kind);
       const left = leaveSession(message);
-      return reply(message, `${left}已开启新会话，下一条消息会创建新的 ${agentName} 上下文。`, 'new');
-    }
-    if (text === '/temp') {
-      const left = leaveSession(message);
-      state.sessions[message.chat] = { temp: true, cwd: newSessionDir(botOf(message)) }; save();
-      return reply(message, `${left}已开启临时会话，下一条消息会创建新的 ${agentName} 上下文。离开它时（/new、/temp${sessions ? '、/switch' : ''}）会自动删除；想留下来就发 /keep。`, 'temp');
+      // A session that does not exist yet is a record without an ID: it holds the directory and the temporary mark.
+      if (temp || chosen.dir) { state.sessions[message.chat] = { ...(temp ? { temp: true } : {}), cwd: chosen.dir || chatDir(message) }; save(); }
+      const place = chosen.dir ? `已在 ${chosen.dir} 开启${temp ? '临时' : '新'}会话，下一条消息会在这个目录里创建新的 ${agentName} 上下文。这只对这一个会话有效，想让以后的新会话都在这个目录，用 /dir。`
+        : `已开启${temp ? '临时' : '新'}会话，下一条消息会创建新的 ${agentName} 上下文。`;
+      return reply(message, `${left}${place}${temp ? `离开它时（/new、/temp${sessions ? '、/switch' : ''}）会自动删除；想留下来就发 /keep。` : ''}`, kind);
     }
     if (text === '/keep') return keepSession(message);
+    const dirQuery = commandArgs(text, '/dir');
+    if (dirQuery !== null) return changeDir(message, dirQuery);
     if (text === '/exit') return reply(message, '会话之间不再有主次，/exit 已取消：发 /switch 编号 切换到任一会话，或 /new 开新会话。', 'exit');
     const renameQuery = commandArgs(text, '/rename');
     if (renameQuery !== null) return renameSession(message, renameQuery, generation);

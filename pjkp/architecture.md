@@ -5,6 +5,7 @@
 ## 运行环境（本机实例）
 
 - 2026-11-10 起 Sophia 运行在宿主机上（原先在一个 Docker 容器里，那一份已停用；两份共用同一个飞书应用，不能同时运行）。2026-11-11 起同一个服务接两个飞书机器人 Sophia 和 Cora（`config.json` 的 `bots`，各用一个 `lark-cli` 配置档，Cora 的配置档名为 `cora`，设置相同；应用凭证存在 `lark-cli` 自己的加密存储里，不在本仓库和 `config.json` 中）。主机为 2 核、3.5 GB 内存。以 systemd 系统服务 `agent-connector` 运行，开机自启；日志用 `node service.mjs logs` 查看，不再写入 `runtime/bridge.log`。
+- 2026-11-12 起 Sophia 不再只服务一个人：飞书应用的可用范围改为全体员工（用户在开发者后台改的），授权名单里有 4 位用户，并开启了群聊；Cora 仍只有 1 位用户、不开群聊。名单里的人权限相同，都能让 Agent 在主机上执行任何操作。查用户的 open ID 用本机 `lark-cli contact +search-user --as user`（按应用区分，Sophia 是默认配置档）。
 - 是否在运行以 `node service.mjs status` 为准：进程被强杀或主机重启后，`runtime/status.json` 可能仍写着 `ready: true`。
 - `config.json` 只在本机，不进仓库。
 - 飞书私聊可能用 `/switch` 接在终端正在用的 Claude Code 会话上，飞书那边的 Agent 也会改这个仓库，终端会话看不到这些改动。
