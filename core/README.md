@@ -16,11 +16,12 @@
 | `core/bots.mjs` | 机器人列表：把 `config.bots` 解析成每个机器人的配置和访问范围。 |
 | `core/registry.mjs` | 模块登记表：名称 → 目录。 |
 | `core/cli-turn.mjs` | 命令行类 Agent 共用的进程运行器。 |
+| `core/session-list.mjs` | 提供会话列表的 Agent 共用的部分：筛选、按编号或名称选取、列表文字、把删除的会话移到回收目录。 |
 | `core/process.mjs` | 启动和结束外部程序：`start(bin, args, options)`、`stop(child)`。渠道或 Agent 要运行命令行工具时用它而不是直接 `spawn`，这样在 Windows 上也能启动 npm 装的工具、结束整个进程树，并且不经过 shell。 |
 | `core/text.mjs` | 回复拆分、会话名标题、幂等键、`safeLabel`。 |
 | `lark-channel/` | 飞书渠道（参考实现）。 |
 | `claude-code-agent/` | Claude Code（实现了全部可选功能的参考）。 |
-| `codex-agent/` | Codex（基于 `runCliTurn` 的最小命令行 Agent）。 |
+| `codex-agent/` | Codex（基于 `runCliTurn` 的命令行 Agent）。 |
 | `example-agent/` | 模板：不依赖外部程序的回声 Agent，可直接复制改名；也可配置 `"agent": "example"` 不花模型额度地测试渠道。 |
 
 ## 接入步骤
@@ -73,7 +74,7 @@ export function createAgent(config, context) {
 | `timeoutMs` | number | 本轮最长运行时间（`config.turnTimeoutMs`）。Agent 必须自己在超时后停止。 |
 | `files` | array | 用户在这条消息之前发来、随本轮交付的文件 `[{ path, name, size }]`（`capabilities.files` 为 false 时始终为 `[]`）。中枢已在 `text` 里写明文件名和本地路径；Agent 要保证能读到这些路径，例如 Claude Code 在会话目录之外时加 `--add-dir`。 |
 | `outbox` | string \| undefined | 本轮发件目录，渠道支持发回文件且 `capabilities.files` 为 true 时提供。中枢已在 `text` 里告诉模型把要发给用户的文件存到这里；本轮成功后，中枢把目录里的普通文件（每个不超过渠道的 `fileReplies.linkMaxBytes`，没有时为 `maxBytes`；最多 5 个）作为回复发出。Agent 要保证能写这个目录，例如 Claude Code 在会话目录之外时加 `--add-dir`。 |
-| `instructionsFile` | string \| undefined | 会话不在 `config.workspace` 中运行时，指向 `workspace/CLAUDE.md`；Agent 应把它作为附加指令（Claude Code 用 `--append-system-prompt-file`）。 |
+| `instructionsFile` | string \| undefined | 会话不在 `config.workspace` 中运行时，指向工作区里这个 Agent 的说明文件（默认 `workspace/CLAUDE.md`，Agent 可用 `instructionsName` 改）；Agent 应把它作为附加指令（Claude Code 用 `--append-system-prompt-file`）。 |
 | `turnKey` | string | 本条消息唯一、可安全用作文件名的键，例如 Codex 用它命名答案文件。 |
 | `onSession(id)` | function | 一旦知道会话 ID 就调用（可以多次）。中枢保存后，下一轮作为 `sessionId` 传回；不调用则每轮都是新会话。 |
 | `onStats(stats)` | function | 可选，运行中随时调用，`stats` 可含 `model`、`effort`、`context`（当前上下文 token 数）、`quota`（`{ fiveHour, sevenDay }`，各为 `{ used: 0–1, resetsAt: 秒 }`）、`turn`（本轮 `{ output, newInput, cacheRead }`）。中枢记下后交给支持卡片的渠道显示。 |
@@ -157,7 +158,9 @@ runTurn: ({ sessionId, cwd, text, timeoutMs, onSession }) => runCliTurn({
 
 ### Agent 的约定
 
-- 工作区说明文件由 Agent 自己读取：Claude Code 读 `workspace/CLAUDE.md`，Codex 读 `workspace/AGENTS.md`。新 Agent 需要别的文件时放进 `workspace/`，并在 README 说明。
+- 工作区说明文件由 Agent 自己读取：Claude Code 读 `workspace/CLAUDE.md`，Codex 读 `workspace/AGENTS.md`。说明文件不叫 `CLAUDE.md` 的 Agent 用 `instructionsName` 给出文件名，会话在别的目录运行时，中枢把这个文件的路径作为 `instructionsFile` 传入。
+- Agent 可以用 `sessionDir` 给出新会话的默认目录（没有配置 `config.sessionDir` 时生效）；不给则是主目录。
+- 提供 `sessions` 的 Agent 可以直接用 `core/session-list.mjs` 里的 `filterSessions`、`pickSession`、`formatSessionList`、`timeAgo` 和 `trashFiles`。新 Agent 需要别的文件时放进 `workspace/`，并在 README 说明。
 - 权限：默认采用安全设置，不需要有人在场确认（没有人能回答确认提示）；高风险设置只能由用户在配置或 `/mode` 中明确选择。
 - 子进程必须用 `context.env`，不要直接用 `process.env`。
 

@@ -5,7 +5,7 @@
 - 只处理配置中指定用户（owner，可配置多人）的消息：默认只收私聊，可选择允许他们在群聊中真实 @机器人。
 - 每个聊天有独立的 Agent 会话，通过会话 ID 续接上下文；私聊、各个群互不读取。同一聊天的消息串行执行，按消息 ID 去重；几个聊天进了同一个会话时，这个会话上的任务也一个个执行，后来的等前一个结束；没发出去的回复存在本地，自动重试。
 - 撤回一条消息，机器人就停止处理它：正在执行的任务被中断，还在排队的不再执行，也不再回复；已经做完的操作不会撤销，同一聊天里的其他消息照常处理。飞书上最多约 5 秒后生效。
-- 开始处理时在原消息上加一个敬礼表情。Claude Code 支持图片和图文消息（每条最多 4 张，单张 5 MiB、合计 6 MiB 以内，JPEG/PNG/GIF/WebP），支持飞书 Markdown 富文本回复；Codex 目前只收文字。
+- 开始处理时在原消息上加一个敬礼表情。Claude Code 支持图片和图文消息（每条最多 4 张，单张 5 MiB、合计 6 MiB 以内，JPEG/PNG/GIF/WebP），支持飞书 Markdown 富文本回复；Codex 同样接收图片（见 [Codex](#codex)）。
 - 可以发文件（PDF、文本、表格、文档等，单个最多 100 MiB），Agent 也能把改好或生成的文件发回来，见[文件](#文件)；语音、视频消息暂不支持。
 
 ## 指令
@@ -18,21 +18,21 @@
 | `/status` | 机器人、Agent、连接状态、当前任务、权限模式、当前会话与会话 ID、工作区 | 立即 | 全部 |
 | `/stop` | 停止当前任务，并清空这个聊天里排队的消息；已执行的操作不会撤销，会话上下文保留 | 立即 | 全部 |
 | `/new` | 开启新会话：在 `sessionDir`（默认是主目录，与终端里的 Claude Code 会话同处）新建，不再放进本项目的 `workspace/`；如果在其他会话里，先退出 | 排队 | 全部 |
-| `/mode [模式名]` | 不带参数时查看当前权限模式和全部选项，带参数时切换（见[权限模式](#权限模式)） | 排队 | Claude Code |
+| `/mode [模式名]` | 不带参数时查看当前权限模式和全部选项，带参数时切换（见[权限模式](#权限模式)） | 排队 | Claude Code、Codex |
 | `/model [名称]` | 不带参数时查看这个聊天使用的模型和可选项，带参数时切换；`/model default` 恢复默认。Claude Code 可写别名（`fable`、`opus`、`sonnet`、`haiku`）或完整模型名。从下一条消息开始生效，只影响这个聊天，重启后保留 | 排队 | Claude Code、Codex |
 | `/effort [级别]` | 查看或切换推理深度（Claude Code：`low`、`medium`、`high`、`xhigh`、`max`）；`/effort default` 恢复默认。生效范围同 `/model` | 排队 | Claude Code、Codex |
-| `/rename [名称]` | 重命名当前会话；不写名称时根据对话内容自动生成。改名后，回复首行的会话名、`/sessions` 列表和终端的会话列表都会用新名字。调用 Claude Code 自带的 `/rename` | 排队 | Claude Code |
+| `/rename [名称]` | 重命名当前会话；不写名称时根据对话内容自动生成。改名后，回复首行的会话名、`/sessions` 列表和终端的会话列表都会用新名字。调用 Claude Code 自带的 `/rename` | 排队 | Claude Code、Codex |
 | `/compact [要点]` | 压缩当前会话的上下文，回复压缩前后的 token 数；会话 ID 不变，之后的消息基于压缩后的摘要继续。可附上摘要里要保留的重点，如 `/compact 保留 newdash 的设计决定`。调用 Claude Code 自带的 `/compact` | 排队 | Claude Code |
-| `/usage` | 查询 Claude 订阅用量：当前会话窗口和本周的用量百分比与重置时间。调用本机 Claude Code 自带的 `/usage`，不消耗模型调用，也不保存会话 | 立即 | Claude Code |
-| `/sessions [all \| 关键词]` | 列出本机可切换的会话（见[切换会话](#切换会话)） | 立即 | Claude Code，仅私聊 |
-| `/switch 编号` | 切换到列表中的任一会话，先收到前情梗概；也可写会话 ID 开头几位或完整会话名 | 排队 | Claude Code，仅私聊 |
-| `/delete 编号` | 删除列表中的会话（终端开的也可以）：先回复会话信息，10 分钟内发 `/delete 编号 确认` 才删除。可一次写多个编号和范围，如 `/delete 1 3 5-7`：不能删的会列出原因并跳过，确认时发同一条命令加“确认”，只有和刚才列出的会话完全一致才删除。会话记录和同名文件夹移到 `runtime/trash/`（附 `restore.json` 说明移回哪里），之后 `/sessions` 和终端的 `/resume` 都不再显示。不能删当前所在的会话、终端里开着的会话和正在执行任务的会话；用过它的聊天下一条消息开新会话 | 排队 | Claude Code，仅私聊 |
+| `/usage` | 查询 Claude 订阅用量：当前会话窗口和本周的用量百分比与重置时间。调用本机 Claude Code 自带的 `/usage`，不消耗模型调用，也不保存会话 | 立即 | Claude Code、Codex |
+| `/sessions [all \| 关键词]` | 列出本机可切换的会话（见[切换会话](#切换会话)） | 立即 | Claude Code、Codex，仅私聊 |
+| `/switch 编号` | 切换到列表中的任一会话，先收到前情梗概；也可写会话 ID 开头几位或完整会话名 | 排队 | Claude Code、Codex，仅私聊 |
+| `/delete 编号` | 删除列表中的会话（终端开的也可以）：先回复会话信息，10 分钟内发 `/delete 编号 确认` 才删除。可一次写多个编号和范围，如 `/delete 1 3 5-7`：不能删的会列出原因并跳过，确认时发同一条命令加“确认”，只有和刚才列出的会话完全一致才删除。会话记录和同名文件夹移到 `runtime/trash/`（附 `restore.json` 说明移回哪里），之后 `/sessions` 和终端的 `/resume` 都不再显示。不能删当前所在的会话、终端里开着的会话和正在执行任务的会话；用过它的聊天下一条消息开新会话 | 排队 | Claude Code、Codex，仅私聊 |
 
 - **立即**：马上回复，不等正在运行的任务。**排队**：和普通消息按发送顺序执行，排在它前面的消息不受影响。
 - `/compact` 用于会话变长或切换话题前主动压缩，也可以指定摘要里要保留的重点。
 - Claude 返回错误时（例如订阅额度用完），回复里会给出原因；额度用完时会提示用 `/usage` 查看重置时间。
 - 不以这些指令开头的文字、图片都会交给 Agent。一条消息不超过 40,000 字；同时排队超过 20 条时会请你稍后再发。
-- 当前 Agent 不支持的指令（例如 Codex 下的 `/mode`）会回复说明，不会转给 Agent。
+- 当前 Agent 不支持的指令（例如 Codex 下的 `/compact`）会回复说明，不会转给 Agent。
 
 ## 文件
 
@@ -153,7 +153,7 @@ lark-channel/     ◀──回复──  core/     ◀──最终回答──  
 | `core/` | 中枢 `hub.mjs`：按聊天排队、去重、回复发件箱与重试、聊天状态，以及上面全部指令。`cli-turn.mjs` 是命令行类 Agent 共用的进程运行器，`text.mjs` 负责回复拆分和会话名标题。不含任何渠道或 Agent 的细节。 |
 | `lark-channel/` | 飞书：`lark-cli` 长连接收 `im.message.receive_v1`、过滤非 owner 和过期消息、去掉 @机器人、发回复、加表情、下载图片。`lark-cli` 1.0.98 起拒绝把下载写到 `/root` 下，图片先下载到系统临时目录中的私有目录（700），检查格式和大小后复制到工作区 `attachments/`，再删除临时目录。 |
 | `claude-code-agent/` | Claude Code：运行对话、权限模式、`/rename`、`/compact`、`/usage`、本机会话列表与前情梗概。 |
-| `codex-agent/` | Codex：运行对话（仅文字）、`/model`、`/effort`（这两项未用真实 Codex 验证），也是基于 `core/cli-turn.mjs` 的最小命令行 Agent 示例。 |
+| `codex-agent/` | Codex：运行对话（文字、图片、文件）、`/mode`、`/model`、`/effort`、`/usage`、`/rename`、会话列表与切换、`/delete`，见 [Codex](#codex)。`cli.mjs` 是命令行参数和事件，`sessions.mjs` 读 Codex 的会话记录。 |
 | `service.mjs`、`service/` | 服务管理（systemd / launchd / 内置守护进程）与 `doctor` 检查，见[长期运行](#长期运行)。 |
 | `example-agent/` | 模板：不依赖外部程序的回声 Agent，复制改名即可开始接入；也可配置 `"agent": "example"` 不花模型额度地测试渠道。 |
 
@@ -225,7 +225,7 @@ cp config.example.json config.json          # 或 Codex
 | `larkBin` / `claudeBin` / `codexBin` | 对应可执行文件路径，只需填写所选模块用到的。也可以写 `.js` / `.mjs` / `.cjs` 脚本，由 Node.js 运行。Windows 上的写法见[长期运行](#长期运行)。 |
 | `workspace` | Agent 的工作区绝对路径；收到的图片保存在其中的 `attachments/`。 |
 | `maxFileBytes` | 收文件的单个大小上限（字节），省略时为 100 MiB。发回文件不受此项影响（30 MB 以内直接发，更大的经云空间发链接，最多 1 GiB）。 |
-| `sessionDir` | 新会话的工作目录，省略时为运行用户的主目录，会话记录因此与终端里的会话放在一起。会话在此目录之外运行时，`workspace/CLAUDE.md` 会作为附加系统提示传给 Claude Code。 |
+| `sessionDir` | 新会话的工作目录，省略时为运行用户的主目录（Codex 省略时为 `workspace`，见 [Codex](#codex)），会话记录因此与终端里的会话放在一起。会话在此目录之外运行时，`workspace/CLAUDE.md` 会作为附加系统提示传给 Claude Code。 |
 | `maxEventAgeMs` | 接受消息的最大年龄，单位毫秒。 |
 | `turnTimeoutMs` | 单条任务的最长运行时间，单位毫秒；前情梗概最多 5 分钟。 |
 | `recallCheckMs` | 可选，处理一条消息期间每隔多久查一次它是否被撤回，单位毫秒，省略时为 5000；只用于没有撤回事件的渠道（如飞书）。 |
@@ -245,7 +245,23 @@ node bridge.mjs
 
 桥接程序在源码目录下的 `runtime/` 保存进程锁、状态、会话映射和待发送回复，该目录包含私人数据。不要为同一配置同时启动多个进程；重启不会自动重跑中途退出的任务。
 
-Codex 使用 `workspace-write` 沙箱和不交互审批策略；`skip_host_skill_discovery` 是 Codex CLI 开发中功能，CLI 版本变化后需验证兼容性。
+### Codex
+
+Codex 模块按 Codex 0.167.2 的源码（`codex exec` 的参数、事件和会话记录格式）编写，**还没有用真实的 Codex 运行过**，第一次使用请逐项确认。和 Claude Code 模块的差别：
+
+| 项目 | Codex 的做法 |
+| --- | --- |
+| 会话目录 | 新会话默认在 `workspace` 里运行；配置了 `sessionDir` 则用它。会话目录同时是沙箱允许写入的范围，所以默认不放在主目录。切换到别的会话时在那个会话自己的目录里运行。 |
+| 权限模式（`/mode`，默认值 `codexMode`） | `read-only`、`workspace-write`（默认）、`auto-review`（超出范围的操作交给 Codex 的自动审查）、`danger-full-access`（不设沙箱，只能在私聊切换）。没有人能回答确认，所以除 `auto-review` 外需要确认的操作都直接拒绝。 |
+| 模型与推理深度 | `/model` 接受任意模型名，默认值 `codexModel`；`/effort` 为 `minimal`、`low`、`medium`、`high`、`xhigh`，默认值 `codexEffort`。 |
+| 图片和文件 | 图片用 `-i` 传入；收到的文件和发件目录不在会话目录里时用 `--add-dir` 放开。 |
+| 工作区说明 | 会话在 `workspace` 里时 Codex 自己读 `workspace/AGENTS.md`；在别的目录时，桥接程序把这个文件的内容作为附加指令传入。 |
+| `/usage` | Codex 只在回答时报告额度，这里显示最近一次回答时的数据，不调用模型。 |
+| `/rename` | 名称保存在 `runtime/codex-names.json`，只在聊天里显示；Codex 自己起的名字会被读取并显示，但这里改的名字不会写回 Codex。不写名称时取第一条提问的开头。 |
+| `/sessions`、`/switch`、`/delete` | 读 `~/.codex/sessions/` 下的会话记录（设置了 `CODEX_HOME` 则用它）；压缩过的旧记录需要 Node.js 22.15 以上才能读。看不出一个会话是否正在终端里打开：Codex 自己会拒绝同时写入同一个会话，这时本轮报错。梗概在一个不保存的分支会话里生成，不改动原会话。 |
+| `/compact` | 不支持：`codex exec` 没有压缩上下文的命令，Codex 会自动压缩。 |
+
+`skip_host_skill_discovery` 是 Codex CLI 开发中功能，CLI 版本变化后需验证兼容性。
 
 ## 长期运行
 

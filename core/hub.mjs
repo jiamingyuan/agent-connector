@@ -193,9 +193,10 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     return { id: current?.id, cwd: current?.cwd || newSessionDir(botOf(message)), name: current?.name, file: current?.file };
   }
   // A bot limited to some directories starts its sessions in sessionDir when that lies inside them,
-  // else in the first of them.
+  // else in the first of them. Without sessionDir an agent may name its own default (Codex: the
+  // workspace, because the session directory is also what its sandbox lets it write).
   function newSessionDir(bot) {
-    const dir = bot.config.sessionDir, scope = bot.access.sessions;
+    const dir = bot.config.sessionDir || agent.sessionDir, scope = bot.access.sessions;
     if (!Array.isArray(scope)) return dir || os.homedir();
     return dir && scope.some(base => within(path.resolve(dir), base)) ? dir : scope[0];
   }
@@ -274,10 +275,11 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
   }
   function runAgent(message, { images = [], files = [], outbox, target, turn = {} }) {
     const startedAt = Date.now();
+    const instructions = path.join(config.workspace, agent.instructionsName || 'CLAUDE.md');
     return track(message, agent.runTurn({ sessionId: target.id, cwd: target.cwd, text: composeText(message, target, files, outbox), images, files, outbox,
       mode: chosenMode(message), model: choice('model', message), effort: choice('effort', message), timeoutMs: config.turnTimeoutMs, turnKey: replyKey(message.uid, 'output'),
-      // The bridge's own instructions (workspace/CLAUDE.md) still apply when the chat's session runs elsewhere.
-      instructionsFile: target.cwd !== config.workspace && fs.existsSync(path.join(config.workspace, 'CLAUDE.md')) ? path.join(config.workspace, 'CLAUDE.md') : undefined,
+      // The bridge's own instructions (workspace/CLAUDE.md, or the file the agent names) still apply when the chat's session runs elsewhere.
+      instructionsFile: target.cwd !== config.workspace && fs.existsSync(instructions) ? instructions : undefined,
       onSession: id => rememberSession(message, target, id),
       onStats: stats => {
         recordStats(message.chat, target, stats);
