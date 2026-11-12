@@ -152,7 +152,7 @@ runTurn: ({ sessionId, cwd, text, timeoutMs, onSession }) => runCliTurn({
 | `resumeHint(id)` | 返回在终端里重新打开该会话的命令，用于提醒。 |
 | `fileFor(file, id)` | 可选，会话 ID 变化后返回新的记录文件路径。 |
 | `recap({ sessionId, cwd, timeoutMs })` | 生成前情梗概，返回与 `runTurn` 相同的 `{ cancel, result }`；不得改动原会话，也不得调用 `onSession`。 |
-| `trash(session, trashRoot)` | 可选，提供时启用 `/delete`：把会话记录移出 Agent 的会话目录、放到 `trashRoot` 下，返回 `{ trash, restoreTo }`。中枢负责确认、拒绝当前或正在使用的会话，并清掉聊天对它的引用。 |
+| `trash(session, trashRoot)` | 可选，提供时启用 `/delete`：把会话记录移出 Agent 的会话目录、放到 `trashRoot` 下，返回 `{ trash, restoreTo }`。中枢负责确认、拒绝当前或正在使用的会话，并清掉聊天对它的引用；一次删除多个时，中枢对每个会话各调用一次。 |
 
 ### Agent 的约定
 

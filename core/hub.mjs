@@ -58,7 +58,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
   state.efforts ||= {};
   // pendingFiles: chat ID -> files received but not yet handed to the agent (see receiveFiles).
   state.pendingFiles ||= {};
-  // pendingDeletes: chat ID -> { id, at } of the session a /delete is waiting to have confirmed.
+  // pendingDeletes: chat ID -> { ids, at } of the sessions a /delete is waiting to have confirmed.
   state.pendingDeletes ||= {};
   state.owners ||= {};
   // A config that gains `bots` keeps its chats: what was recorded before then belongs to the first bot.
@@ -534,39 +534,89 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
   // ---- /delete ----
   // Any listed session can be deleted, the user's terminal ones included, after a confirmation. The
   // files go to runtime/trash, so the session leaves this list and the terminal's /resume alike.
+  // Several numbers and ranges ("1 3 5-7") delete several at once: the ones that cannot be deleted
+  // are named and left out, and the confirmation only counts for exactly the set that was shown.
   const DELETE_CONFIRM_MS = 10 * 60_000;
+  const DELETE_USAGE = '用法：/delete 编号，可一次写多个（如 /delete 1 3 5-7）。先发 /sessions 查看列表；确认后再发同一条命令加“确认”。';
+  // "1 3 5-7" -> ['1', '3', '5', '6', '7']; anything else is one name or ID. null: a range is not usable.
+  function deleteKeys(text) {
+    if (!/^\d+(-\d+)?([\s,，、]+\d+(-\d+)?)*$/.test(text)) return [text];
+    const keys = new Set();
+    for (const part of text.split(/[\s,，、]+/)) {
+      const [from, to = from] = part.split('-').map(Number);
+      if (to < from || to - from >= 100) return null;
+      for (let number = from; number <= to; number++) keys.add(String(number));
+    }
+    return [...keys];
+  }
+  // Why a session cannot be deleted now: [short reason, full sentence], or null.
+  function deleteBlocker(message, session) {
+    if (session.id === state.sessions[message.chat]?.id) return ['当前所在的会话', `「${session.name}」是当前所在的会话，不能删除。先 /new 或 /switch 到别的会话再删。`];
+    const holder = holderOf(session.id, message);
+    if (holder) return [`正由机器人 ${holder} 开着`, `会话「${session.name}」正由机器人 ${holder} 开着，不能删除。`];
+    if (sessions.running().has(session.id) && !sessionWork.has(session.id)) return ['在终端里还开着', `会话「${session.name}」在终端里还开着，先退出那个终端窗口再删除。`];
+    if ([...active.keys()].some(chatId => state.sessions[chatId]?.id === session.id)) return ['正在执行任务', `会话「${session.name}」正在${where(message)}的另一个对话里执行任务，等它结束后再删除。`];
+    return null;
+  }
   function deleteSession(message, query) {
     const refusal = sessionCommandRefusal(message);
     if (refusal) return reply(message, refusal.replace('会话切换', '删除会话'), 'delete');
     const confirmed = /\s确认$/.test(` ${query}`);
     const key = query.replace(/\s*确认$/, '').trim();
-    if (!key) return reply(message, '用法：/delete 编号。先发 /sessions 查看列表；确认后再发 /delete 编号 确认。', 'delete');
-    const { session, problem } = findSession(message, key);
-    if (problem) return reply(message, problem, 'delete');
-    const current = state.sessions[message.chat]?.id;
-    if (session.id === current) return reply(message, `「${session.name}」是当前所在的会话，不能删除。先 /new 或 /switch 到别的会话再删。`, 'delete');
-    const holder = holderOf(session.id, message);
-    if (holder) return reply(message, `会话「${session.name}」正由机器人 ${holder} 开着，不能删除。`, 'delete');
-    if (sessions.running().has(session.id) && !sessionWork.has(session.id)) return reply(message, `会话「${session.name}」在终端里还开着，先退出那个终端窗口再删除。`, 'delete');
-    if ([...active.keys()].some(chatId => state.sessions[chatId]?.id === session.id)) return reply(message, `会话「${session.name}」正在${where(message)}的另一个对话里执行任务，等它结束后再删除。`, 'delete');
+    if (!key) return reply(message, DELETE_USAGE, 'delete');
+    const keys = deleteKeys(key);
+    if (!keys) return reply(message, `编号范围要从小到大写，一次最多 100 个，如 5-7。${DELETE_USAGE}`, 'delete');
+    const several = keys.length > 1;
+    const chosen = [], skipped = [];
+    for (const item of keys) {
+      const { session, problem } = findSession(message, item);
+      if (problem) { if (!several) return reply(message, problem, 'delete'); skipped.push(`${item}：列表里没有这个编号`); continue; }
+      if (chosen.some(other => other.session.id === session.id)) continue;
+      const blocker = deleteBlocker(message, session);
+      if (!blocker) { chosen.push({ item, session }); continue; }
+      if (!several) return reply(message, blocker[1], 'delete');
+      skipped.push(`${item}. ${session.name}：${blocker[0]}`);
+    }
+    const left = skipped.length ? `不会删除（${skipped.length} 个）：\n${skipped.join('\n')}` : '';
+    if (!chosen.length) return reply(message, `没有可以删除的会话。\n${left}`, 'delete');
+    const ids = chosen.map(({ session }) => session.id);
     const pending = state.pendingDeletes[message.chat];
-    if (!confirmed || pending?.id !== session.id || Date.now() - pending.at > DELETE_CONFIRM_MS) {
-      state.pendingDeletes[message.chat] = { id: session.id, at: Date.now() }; save();
-      return reply(message, [`将删除会话「${session.name}」`, `目录：${session.cwd}`, `最近活动：${sessions.ago(session.mtimeMs)}`, `会话 ID：${session.id}`,
-        `删除后它不再出现在 /sessions 和终端的 /resume 中，会话记录移到回收目录，可手动恢复。确认请在 10 分钟内发：/delete ${key} 确认`].join('\n'), 'delete');
+    const shown = pending?.ids || (pending?.id ? [pending.id] : []);
+    if (!confirmed || shown.length !== ids.length || !ids.every(id => shown.includes(id)) || Date.now() - pending.at > DELETE_CONFIRM_MS) {
+      state.pendingDeletes[message.chat] = { ids, at: Date.now() }; save();
+      const [{ session }] = chosen;
+      const what = several
+        ? [`将删除 ${chosen.length} 个会话：`, ...chosen.map(({ item, session: one }) => `${item}. ${one.name} · ${one.cwd} · ${sessions.ago(one.mtimeMs)}`), left]
+        : [`将删除会话「${session.name}」`, `目录：${session.cwd}`, `最近活动：${sessions.ago(session.mtimeMs)}`, `会话 ID：${session.id}`];
+      return reply(message, [...what.filter(Boolean),
+        `删除后${several ? '它们' : '它'}不再出现在 /sessions 和终端的 /resume 中，会话记录移到回收目录，可手动恢复。确认请在 10 分钟内发：/delete ${key} 确认`].join('\n'), 'delete');
     }
     delete state.pendingDeletes[message.chat];
-    let moved;
-    try { moved = sessions.trash(session, path.join(runtime, 'trash')); }
-    catch (error) {
-      log('session_delete_error', { type: error.code || error.name }); save();
-      return reply(message, `删除失败（${error.code || error.name}），会话没有改动。`, 'delete');
+    const trashRoot = path.join(runtime, 'trash');
+    const done = [], failed = [];
+    for (const { session } of chosen) {
+      try { done.push({ session, moved: sessions.trash(session, trashRoot) }); }
+      catch (error) {
+        log('session_delete_error', { type: error.code || error.name });
+        failed.push({ name: session.name, reason: error.code || error.name });
+        continue;
+      }
+      // Chats that used this session start a new one next time.
+      for (const [chatId, own] of Object.entries(state.sessions)) if (own?.id === session.id) delete state.sessions[chatId];
+      log('session_deleted', { chatId: message.chat, messageId: message.id });
     }
-    // Chats that used this session start a new one next time.
-    for (const [chatId, own] of Object.entries(state.sessions)) if (own?.id === session.id) delete state.sessions[chatId];
     save(); status();
-    log('session_deleted', { chatId: message.chat, messageId: message.id });
-    return reply(message, `已删除会话「${session.name}」。\n会话记录已移到 ${moved.trash}；要恢复，把其中除 restore.json 外的文件移回 ${moved.restoreTo}。`, 'delete');
+    if (!several) {
+      if (failed.length) return reply(message, `删除失败（${failed[0].reason}），会话没有改动。`, 'delete');
+      const [{ session, moved }] = done;
+      return reply(message, `已删除会话「${session.name}」。\n会话记录已移到 ${moved.trash}；要恢复，把其中除 restore.json 外的文件移回 ${moved.restoreTo}。`, 'delete');
+    }
+    return reply(message, [
+      done.length && `已删除 ${done.length} 个会话：${done.map(({ session }) => session.name).join('、')}。`,
+      done.length && `会话记录已移到 ${trashRoot} 下各自的文件夹；要恢复某一个，把它文件夹中除 restore.json 外的文件移回 restore.json 里 restoreTo 写的目录。`,
+      failed.length && `删除失败（${failed.length} 个），这些会话没有改动：${failed.map(({ name, reason }) => `${name}（${reason}）`).join('、')}。`,
+      left,
+    ].filter(Boolean).join('\n'), 'delete');
   }
 
   // Checked before every turn in an existing session.
@@ -699,7 +749,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     if (agent.usage) lines.push(`/usage：${agent.usageLabel}`);
     if (sessions) lines.push(`/sessions：列出本机可切换的 ${agentName} 会话（仅私聊；/sessions all 包括脚本会话，/sessions 关键词 筛选）`,
       '/switch 编号：切换到列表中的任一会话，并收到前情梗概');
-    if (sessions?.trash) lines.push('/delete 编号：删除列表中的会话（需再次确认；终端的 /resume 里也会消失）');
+    if (sessions?.trash) lines.push('/delete 编号：删除列表中的会话，可一次写多个（如 1 3 5-7；需再次确认；终端的 /resume 里也会消失）');
     lines.push('/help：使用说明');
     return lines.join('\n');
   }
