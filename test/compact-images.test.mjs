@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runBridge, privateEvent } from './harness.mjs';
@@ -33,7 +34,8 @@ test('images sent in the lark-cli 1.0.98 format reach Claude, downloaded outside
   assert(calls[1].input.startsWith('这张图是什么？'));
   const downloads = await readLines(path.join(root, 'downloads.jsonl'));
   assert.deepEqual(downloads.map(d => d.key), ['img_v3_pure', 'img_v3_post']);
-  const tmp = await fs.realpath(os.tmpdir());
+  // The same resolution the bridge uses: on Windows the temp dir may be known by a short (8.3) name.
+  const tmp = realpathSync(os.tmpdir());
   assert(downloads.every(d => path.basename(d.cwd).startsWith('lark-images-') && d.cwd.startsWith(tmp) && !d.cwd.startsWith(path.join(root, 'attachments'))));
   const saved = await fs.readdir(path.join(root, 'attachments'));
   assert.equal(saved.length, 2);

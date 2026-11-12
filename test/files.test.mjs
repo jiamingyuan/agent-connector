@@ -47,7 +47,7 @@ test('files download through a private temp dir into the workspace under their o
   const [file] = await prepareFiles({ message_id: 'om_doc', message_type: 'file', content: '<file key="file_v3_doc" name="../季度/报告.pdf"/>' }, config, runLark);
   assert.equal(file.name, '报告.pdf');
   assert.equal(file.size, 9);
-  assert(file.path.startsWith(path.join(config.workspace, 'attachments') + path.sep) && file.path.endsWith('/报告.pdf'));
+  assert(file.path.startsWith(path.join(config.workspace, 'attachments') + path.sep) && file.path.endsWith(path.sep + '报告.pdf'));
   assert.equal(fs.readFileSync(file.path, 'utf8'), 'PDF bytes');
   if (process.platform !== 'win32') assert.equal(fs.statSync(file.path).mode & 0o777, 0o600);
   assert(!fs.existsSync(staging));

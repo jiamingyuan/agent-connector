@@ -85,13 +85,14 @@ test('only live registry entries count as open terminals, and idle is distinguis
   const dir = path.join(home, 'sessions');
   fs.mkdirSync(dir);
   fs.writeFileSync(path.join(dir, `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: ids.titled, status: 'busy' }));
-  fs.writeFileSync(path.join(dir, '1.json'), JSON.stringify({ pid: 1, sessionId: ids.ai, status: 'idle' }));
+  // Another live process: the one that started this test.
+  fs.writeFileSync(path.join(dir, `${process.ppid}.json`), JSON.stringify({ pid: process.ppid, sessionId: ids.ai, status: 'idle' }));
   fs.writeFileSync(path.join(dir, '999999999.json'), JSON.stringify({ pid: 999999999, sessionId: ids.scripted, status: 'idle' }));
   fs.writeFileSync(path.join(dir, '42.0123abcd.key'), 'not json');
   fs.writeFileSync(path.join(dir, '43.json'), '{"pid":');
   const running = runningSessions(home);
   assert.deepEqual(running.get(ids.titled), { pid: process.pid, busy: true });
-  assert.deepEqual(running.get(ids.ai), { pid: 1, busy: false });
+  assert.deepEqual(running.get(ids.ai), { pid: process.ppid, busy: false });
   assert(!running.has(ids.scripted));
   assert.equal(runningSessions(path.join(home, 'missing')).size, 0);
 });

@@ -18,7 +18,7 @@ test('bot settings: inherited from the top level, ids unique, access defaults to
   assert.deepEqual([single.id, single.name, single.access], ['', 'Cora', { sessions: 'all', modes: 'all', models: 'all' }]);
   const bots = botConfigs({ larkBin: '/bin/lark', profile: 'p1', bots: [{ name: 'Cora' }, { name: 'Dana', id: 'd', profile: 'p2', access: { sessions: ['/srv/app/'], modes: ['plan'] } }] });
   assert.deepEqual(bots.map(bot => [bot.id, bot.config.profile, bot.config.larkBin, bot.config.botName]), [['Cora', 'p1', '/bin/lark', 'Cora'], ['d', 'p2', '/bin/lark', 'Dana']]);
-  assert.deepEqual(bots[1].access, { sessions: ['/srv/app'], modes: ['plan'], models: 'all' });
+  assert.deepEqual(bots[1].access, { sessions: [path.resolve('/srv/app')], modes: ['plan'], models: 'all' });
   assert.equal(accessOf({ sessions: 'own' }).sessions, 'own');
   assert.throws(() => botConfigs({ bots: [{ name: 'A' }, { name: 'A' }] }), /already uses the id "A"/);
   assert.throws(() => botConfigs({ bots: [{ name: 'a:b' }] }), /must not be empty or contain ":"/);
