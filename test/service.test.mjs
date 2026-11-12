@@ -101,11 +101,12 @@ test('doctor reports tool versions and catches unreadable Claude Code session re
   assert.match(result.text, /✗ Claude Code session records found \(1\) but none could be read/);
 });
 
-test('the built-in supervisor starts the bridge, and stops it on request without a signal', { timeout: 60_000 }, async t => {
+// A copy of the bridge and its service manager in a temporary folder, with a fake lark-cli and the example agent.
+async function serviceFixture(t, cleanup = 'stop') {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'service-test-')));
   const service = (...args) => execFileSync(process.execPath, [path.join(root, 'service.mjs'), ...args, '--supervisor'], { cwd: root, encoding: 'utf8' });
   t.after(() => {
-    try { service('stop'); } catch { /* already stopped */ }
+    try { service(cleanup); } catch { /* already stopped */ }
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   });
   await copySources(root);
@@ -122,6 +123,11 @@ process.stdin.resume();process.stdin.on('end',()=>process.exit(0));}else console
     for (let waited = 0; waited < 20_000 && names.some(name => fs.existsSync(pidFile(name))); waited += 100) await wait(100);
     return !names.some(name => fs.existsSync(pidFile(name)));
   };
+  return { root, service, pidFile, wait, gone };
+}
+
+test('the built-in supervisor starts the bridge, and stops it on request without a signal', { timeout: 60_000 }, async t => {
+  const { service, pidFile, wait, gone } = await serviceFixture(t);
   const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
   assert.match(service('start'), /Started \(supervisor PID \d+\)/);
@@ -143,4 +149,22 @@ process.stdin.resume();process.stdin.on('end',()=>process.exit(0));}else console
   assert.match(service('stop'), /Stopped\./);
   assert(await gone('supervisor.pid', 'bridge.pid'));
   assert.match(service('stop'), /Not running\./);
+});
+
+// Writes the real Run key of whoever runs it, so only on a throwaway Windows machine.
+const runKeyTest = { timeout: 60_000, skip: !(windows && process.env.CI) && 'changes the Windows registry: runs only on a Windows CI machine' };
+test('Windows: install registers the start at login, uninstall removes it and stops the bridge', runKeyTest, async t => {
+  const { root, service, gone } = await serviceFixture(t, 'uninstall');
+  const query = () => execFileSync('reg', runKeyArgs('query'), { encoding: 'utf8' });
+  const installed = service('install');
+  assert.match(installed, /starts when you log in/);
+  assert.match(installed, /Started \(supervisor PID \d+\)/);
+  // The value starts this copy's service manager with this Node.js.
+  const value = query();
+  assert(value.includes(`"${process.execPath}" "${path.join(root, 'service.mjs')}" start`), value);
+  assert.match(service('status'), /Bridge: running\r?\nStarts at login: yes/);
+  assert.match(service('uninstall'), /Uninstalled/);
+  assert.throws(query);
+  assert(await gone('supervisor.pid', 'bridge.pid'));
+  assert.match(service('status'), /Starts at login: no/);
 });
