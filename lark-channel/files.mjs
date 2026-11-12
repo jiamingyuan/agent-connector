@@ -28,10 +28,12 @@ export function fileRefs(content) {
 }
 
 // A single path component: no directories, control or reserved characters, leading dots or
-// overlong names (the extension is kept when shortening).
+// overlong names (the extension is kept when shortening). Also valid on Windows: no trailing dots
+// or spaces, and no device names such as CON or COM1.
 export function safeFileName(name, fallback) {
   let clean = path.basename(String(name || '').replace(/\\/g, '/'))
-    .replace(/[\u0000-\u001f\u007f<>:"|?*]/g, '_').replace(/^[.\s]+/, '').trim();
+    .replace(/[\u0000-\u001f\u007f<>:"|?*]/g, '_').replace(/^[.\s]+/, '').replace(/[.\s]+$/, '');
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i.test(clean)) clean = `_${clean}`;
   if ([...clean].length > 120) {
     const ext = path.extname(clean).slice(0, 16);
     clean = [...clean.slice(0, clean.length - ext.length)].slice(0, 120 - ext.length).join('') + ext;

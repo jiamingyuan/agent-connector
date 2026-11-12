@@ -8,7 +8,7 @@ export const RESTART_DELAY_MS = 15_000;
 
 // systemd on Linux when it is PID 1 (root: system service, otherwise a user service);
 // launchd on macOS (a per-user LaunchAgent); the built-in supervisor everywhere else,
-// e.g. containers, Linux without systemd, or when --supervisor is given.
+// e.g. Windows, containers, Linux without systemd, or when --supervisor is given.
 export function detectBackend({ platform, pid1, uid, forceSupervisor = false }) {
   if (forceSupervisor) return { kind: 'supervisor' };
   if (platform === 'linux' && pid1 === 'systemd') return { kind: 'systemd', scope: uid === 0 ? 'system' : 'user' };
@@ -95,4 +95,22 @@ export function launchctlArgs(action, { uid, plistPath }) {
     restart: ['kickstart', '-k', target],
     status: ['print', target],
   }[action];
+}
+
+// Windows: the supervisor is started at login from the user's Run key, which needs no administrator rights.
+export const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+export const RUN_NAME = 'agent-connector';
+export function runKeyArgs(action, { execPath, script } = {}) {
+  return {
+    add: ['add', RUN_KEY, '/v', RUN_NAME, '/t', 'REG_SZ', '/d', `"${execPath}" "${script}" start`, '/f'],
+    remove: ['delete', RUN_KEY, '/v', RUN_NAME, '/f'],
+    query: ['query', RUN_KEY, '/v', RUN_NAME],
+  }[action];
+}
+
+// Windows: PowerShell arguments that print one process's command line (there is no /proc or ps).
+// UTF-8 output, because the default code page garbles paths with non-ASCII characters.
+export function commandLineArgs(pid) {
+  return ['-NoProfile', '-NonInteractive', '-Command',
+    `[Console]::OutputEncoding = [Text.Encoding]::UTF8; (Get-CimInstance Win32_Process -Filter 'ProcessId = ${Number(pid)}').CommandLine`];
 }

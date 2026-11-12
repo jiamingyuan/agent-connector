@@ -1,6 +1,7 @@
-// Service manager for the bridge on Linux and macOS. Runs the bridge in place from this directory.
+// Service manager for the bridge on Linux, macOS and Windows. Runs the bridge in place from this directory.
 //   Linux with systemd: system service (root) or user service (other users)
 //   macOS:              LaunchAgent in ~/Library/LaunchAgents (starts at login)
+//   Windows:            the supervisor below, started at login from the user's Run key
 //   anything else, or --supervisor: a detached Node supervisor that restarts the bridge on exit
 // Usage: node service.mjs install|start|stop|restart|status|logs|uninstall|doctor [--supervisor]
 import fs from 'node:fs';
@@ -10,13 +11,18 @@ import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { agentId, loadAgent, loadChannel } from './core/registry.mjs';
 import { botConfigs } from './core/bots.mjs';
+import { check, stop as stopProgram } from './core/process.mjs';
 import { detectBackend, servicePath, systemdUnit, systemdUnitPath, launchdPlist, launchdPlistPath, launchctlArgs, UNIT,
-  RESTART_DELAY_MS } from './service/units.mjs';
+  RESTART_DELAY_MS, RUN_KEY, runKeyArgs, commandLineArgs } from './service/units.mjs';
 import { runDoctor } from './service/doctor.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const runtime = path.join(root, 'runtime');
 const supervisorPid = path.join(runtime, 'supervisor.pid');
+const bridgePid = path.join(runtime, 'bridge.pid');
+// Asks the supervisor to stop: Windows has no SIGTERM, and kill() there ends it without stopping the bridge.
+const stopRequest = path.join(runtime, 'supervisor.stop');
+const windows = process.platform === 'win32';
 const logFile = path.join(runtime, 'bridge.log');
 const args = process.argv.slice(2);
 const command = args.find(arg => !arg.startsWith('--')) || 'status';
@@ -29,22 +35,32 @@ function pid1() {
 }
 const backend = detectBackend({ platform: process.platform, pid1: pid1(), uid, forceSupervisor: args.includes('--supervisor') });
 
-const run = (bin, list) => execFileSync(bin, list, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+const run = (bin, list) => execFileSync(bin, list, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
 const systemctl = (...list) => run('systemctl', backend.scope === 'user' ? ['--user', ...list] : list);
 const launchctl = action => run('launchctl', launchctlArgs(action, { uid, plistPath: launchdPlistPath(home) }));
+const runKey = action => run('reg', runKeyArgs(action, { execPath: process.execPath, script: path.join(root, 'service.mjs') }));
+const startsAtLogin = () => { try { runKey('query'); return true; } catch { return false; } };
 function readPid(file) {
   try { return Number(fs.readFileSync(file, 'utf8')) || 0; } catch { return 0; }
 }
-// The command line of a live process, or '' if it is gone. /proc on Linux, ps elsewhere.
+// The command line of a live process, or '' if it is gone. /proc on Linux, PowerShell on Windows
+// (slow, so asked once per process), ps elsewhere.
+const commandLines = new Map();
 function commandLine(pid) {
   if (!pid) return '';
   try { process.kill(pid, 0); } catch (error) { if (error.code !== 'EPERM') return ''; }
+  if (windows) {
+    if (!commandLines.has(pid)) {
+      try { commandLines.set(pid, run('powershell.exe', commandLineArgs(pid)).trim()); } catch { commandLines.set(pid, ''); }
+    }
+    return commandLines.get(pid);
+  }
   try { return fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').replaceAll('\0', ' '); } catch { /* not Linux */ }
   try { return run('ps', ['-p', String(pid), '-o', 'command=']).trim(); } catch { return ''; }
 }
 const alive = (pid, needle) => commandLine(pid).includes(needle);
 function supervisorAlive() { return alive(readPid(supervisorPid), path.join(root, 'service.mjs')); }
-function bridgeAlive() { return alive(readPid(path.join(runtime, 'bridge.pid')), 'bridge.mjs'); }
+function bridgeAlive() { return alive(readPid(bridgePid), 'bridge.mjs'); }
 async function waitFor(check, timeoutMs) {
   for (let waited = 0; waited < timeoutMs; waited += 250) {
     if (check()) return true;
@@ -54,8 +70,8 @@ async function waitFor(check, timeoutMs) {
 }
 
 async function preflight() {
-  if (!['linux', 'darwin'].includes(process.platform)) {
-    throw new Error(`Unsupported platform ${process.platform}; run the bridge on Linux or macOS (on Windows, inside WSL).`);
+  if (!['linux', 'darwin', 'win32'].includes(process.platform)) {
+    throw new Error(`Unsupported platform ${process.platform}; run the bridge on Linux, macOS or Windows.`);
   }
   if (Number(process.versions.node.split('.')[0]) < 20) throw new Error('Node.js 20 or newer is required.');
   const configFile = path.join(root, 'config.json');
@@ -63,7 +79,7 @@ async function preflight() {
   const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
   const bins = new Set((await loadAgent(config)).requiredBins(config));
   for (const bot of botConfigs(config)) for (const bin of (await loadChannel(bot.config)).requiredBins(bot.config)) bins.add(bin);
-  for (const bin of bins) fs.accessSync(bin, fs.constants.X_OK);
+  for (const bin of bins) check(bin);
   if (!path.isAbsolute(config.workspace)) throw new Error('config.workspace must be an absolute path.');
   fs.mkdirSync(config.workspace, { recursive: true });
   fs.mkdirSync(runtime, { recursive: true, mode: 0o700 });
@@ -103,18 +119,36 @@ async function startSupervisor() {
   if (supervisorAlive()) { console.log('Already running.'); return; }
   if (bridgeAlive()) throw new Error('A bridge is already running outside the service (see runtime/bridge.pid); stop it first.');
   const out = fs.openSync(logFile, 'a', 0o600);
+  // Windows keeps the user's own PATH (its variable names ignore case, so a second PATH would be ambiguous).
   const child = spawn(process.execPath, [path.join(root, 'service.mjs'), '__supervise'], {
-    cwd: root, detached: true, stdio: ['ignore', out, out], env: { ...process.env, PATH: envPath },
+    cwd: root, detached: true, windowsHide: true, stdio: ['ignore', out, out], env: windows ? process.env : { ...process.env, PATH: envPath },
   });
   child.unref();
   if (!await waitFor(bridgeAlive, 10_000)) throw new Error(`Bridge did not start; check ${logFile}`);
   console.log(`Started (supervisor PID ${child.pid}). Log: ${logFile}`);
 }
+// Windows only: ends a process and everything it started.
+function endTree(pid) {
+  try { run(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'), ['/pid', String(pid), '/T', '/F']); } catch { /* already gone */ }
+}
 async function stopSupervisor() {
   const pid = readPid(supervisorPid);
-  if (!supervisorAlive()) { console.log('Not running.'); return; }
-  process.kill(pid, 'SIGTERM');
-  if (!await waitFor(() => !supervisorAlive() && !bridgeAlive(), 20_000)) throw new Error('Supervisor did not stop within 20 s.');
+  if (!supervisorAlive()) {
+    // A bridge whose supervisor was ended from outside keeps running on Windows.
+    if (!windows || !bridgeAlive()) { console.log('Not running.'); return; }
+    endTree(readPid(bridgePid));
+  } else {
+    fs.writeFileSync(stopRequest, String(pid), { mode: 0o600 });
+    // Also the signal where there is one: a supervisor started by an older version only knows that.
+    if (!windows) process.kill(pid, 'SIGTERM');
+    const stopped = await waitFor(() => !supervisorAlive() && !bridgeAlive(), 20_000);
+    fs.rmSync(stopRequest, { force: true });
+    if (!stopped) {
+      if (!windows) throw new Error('Supervisor did not stop within 20 s.');
+      endTree(pid); endTree(readPid(bridgePid));
+    }
+  }
+  if (windows) for (const file of [supervisorPid, bridgePid]) fs.rmSync(file, { force: true });
   console.log('Stopped.');
 }
 function supervise() {
@@ -122,7 +156,12 @@ function supervise() {
   let child, stopping = false, timer;
   const note = (type, fields = {}) => console.log(JSON.stringify({ time: new Date().toISOString(), type, ...fields }));
   const start = () => {
-    child = spawn(process.execPath, [path.join(root, 'bridge.mjs')], { cwd: root, stdio: ['ignore', 'inherit', 'inherit'] });
+    // A bridge that was ended without warning (power loss, Windows logoff) leaves its lock behind,
+    // and the process ID in it may belong to another program by now.
+    commandLines.clear();
+    if (!bridgeAlive()) fs.rmSync(bridgePid, { force: true });
+    // The fourth channel carries the request to shut down (see stop below).
+    child = spawn(process.execPath, [path.join(root, 'bridge.mjs')], { cwd: root, windowsHide: true, stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
     child.on('exit', (code, signal) => {
       child = undefined;
       if (stopping) return finish();
@@ -138,9 +177,14 @@ function supervise() {
     if (stopping) return;
     stopping = true; clearTimeout(timer);
     if (!child) return finish();
-    child.kill('SIGTERM');
-    setTimeout(() => { child?.kill('SIGKILL'); finish(); }, 15_000).unref();
+    // Asked over the channel, not with a signal: on Windows a signal ends the bridge at once,
+    // leaving its agent and lark-cli processes behind.
+    if (child.connected) child.send({ type: 'shutdown' }, error => { if (error) stopProgram(child); });
+    else stopProgram(child);
+    setTimeout(() => { if (windows) stopProgram(child); else child?.kill('SIGKILL'); finish(); }, 15_000).unref();
   };
+  fs.rmSync(stopRequest, { force: true });
+  setInterval(() => { if (fs.existsSync(stopRequest)) { fs.rmSync(stopRequest, { force: true }); stop(); } }, 500);
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
   process.on('SIGHUP', () => {}); // survive the launching terminal closing
@@ -173,7 +217,11 @@ if (command === '__supervise') {
   await preflight();
   if (backend.kind === 'systemd') installSystemd();
   else if (backend.kind === 'launchd') installLaunchd();
-  else {
+  else if (windows) {
+    runKey('add');
+    console.log(`Using the built-in supervisor; it starts when you log in (registry ${RUN_KEY}).`);
+    await startSupervisor();
+  } else {
     console.log('Using the built-in supervisor (no start on boot): no systemd or launchd here, or --supervisor was given.');
     await startSupervisor();
   }
@@ -199,6 +247,7 @@ if (command === '__supervise') {
     console.log(`LaunchAgent: ${launchdLoaded() ? 'loaded' : 'not loaded'}\nBridge: ${bridgeAlive() ? 'running' : 'stopped'}`);
   } else {
     console.log(`Supervisor: ${supervisorAlive() ? `running (PID ${readPid(supervisorPid)})` : 'stopped'}\nBridge: ${bridgeAlive() ? 'running' : 'stopped'}`);
+    if (windows) console.log(`Starts at login: ${startsAtLogin() ? 'yes' : 'no (run install)'}`);
   }
   const statusFile = path.join(runtime, 'status.json');
   if (fs.existsSync(statusFile)) console.log(fs.readFileSync(statusFile, 'utf8'));
@@ -213,7 +262,10 @@ if (command === '__supervise') {
   } else if (backend.kind === 'launchd') {
     if (launchdLoaded()) launchctl('unload');
     fs.rmSync(launchdPlistPath(home), { force: true });
-  } else await stopSupervisor();
+  } else {
+    if (windows && startsAtLogin()) runKey('remove');
+    await stopSupervisor();
+  }
   console.log('Uninstalled. config.json, runtime/ and the workspace are kept.');
 } else {
   console.error('Usage: node service.mjs install|start|stop|restart|status|logs|uninstall|doctor [--supervisor]');

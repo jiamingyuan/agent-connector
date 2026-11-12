@@ -4,19 +4,14 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { once } from 'node:events';
-import { copySources } from './harness.mjs';
+import { copySources, fakeBin, stopBridge, removeDir } from './harness.mjs';
 
 test('bridge isolates group sessions and enforces configured timeouts and manual stop', { timeout: 15_000 }, async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lark-group-test-'));
   let child;
   t.after(async () => {
-    if (child && child.exitCode === null && child.signalCode === null) {
-      const closed = once(child, 'close');
-      child.kill('SIGTERM');
-      await closed;
-    }
-    await fs.rm(root, { recursive: true, force: true });
+    await stopBridge(child);
+    await removeDir(root);
   });
   await copySources(root);
   await fs.mkdir(path.join(root, 'runtime'));
@@ -37,9 +32,7 @@ test('bridge isolates group sessions and enforces configured timeouts and manual
     { ...base, chat_type: 'group', chat_id: 'oc_stop', message_id: 'om_stop_hang', content: '@Cora stop request', mentions: mention },
   ];
   await fs.writeFile(path.join(root, 'events.json'), JSON.stringify(events));
-  const fakeLark = path.join(root, 'lark');
-  await fs.writeFile(fakeLark, `#!${process.execPath}
-const fs=require('fs'),path=require('path'),root=__dirname,args=process.argv.slice(2);
+  const fakeLark = await fakeBin(root, 'lark', `const fs=require('fs'),path=require('path'),root=__dirname,args=process.argv.slice(2);
 if(args.includes('consume')){
  process.stderr.write('[event] ready event_key=im.message.receive_v1\\n');
  setTimeout(()=>{for(const e of JSON.parse(fs.readFileSync(path.join(root,'events.json'),'utf8')))console.log(JSON.stringify(e));},50);
@@ -56,10 +49,8 @@ if(args.includes('consume')){
  if(args.includes('+messages-reply'))fs.appendFileSync(path.join(root,'replies.jsonl'),JSON.stringify({id:args[args.indexOf('--message-id')+1],text:args[args.indexOf('--text')+1]})+'\\n');
  console.log(JSON.stringify({ok:true,data:{}}));
 }
-`, { mode: 0o700 });
-  const fakeAgent = path.join(root, 'claude');
-  await fs.writeFile(fakeAgent, `#!${process.execPath}
-const fs=require('fs'),path=require('path'),root=__dirname,args=process.argv.slice(2);let input='';
+`);
+  const fakeAgent = await fakeBin(root, 'claude', `const fs=require('fs'),path=require('path'),root=__dirname,args=process.argv.slice(2);let input='';
 process.stdin.on('data',x=>input+=x);process.stdin.on('end',()=>{
  const index=args.indexOf('--resume'),resumed=index<0?null:args[index+1],session=resumed||'group-'+process.pid;
  fs.appendFileSync(path.join(root,'calls.jsonl'),JSON.stringify({resumed,session,input})+'\\n');
@@ -67,12 +58,12 @@ process.stdin.on('data',x=>input+=x);process.stdin.on('end',()=>{
  if(input.startsWith('hold request')||input.startsWith('stop request')){setInterval(()=>{},1000);return;}
  console.log(JSON.stringify({type:'result',subtype:'success',session_id:session,result:'answer'}));
 });
-`, { mode: 0o700 });
+`);
   await fs.writeFile(path.join(root, 'config.json'), JSON.stringify({
     backend: 'claude', profile: 'fake', ownerOpenId: 'ou_owner', botOpenId: 'ou_cora', allowGroupMentions: true,
     botName: 'Cora', larkBin: fakeLark, claudeBin: fakeAgent, workspace: root, maxEventAgeMs: 300_000, turnTimeoutMs: 1500,
   }));
-  child = spawn(process.execPath, [path.join(root, 'bridge.mjs')], { stdio: ['ignore', 'pipe', 'pipe'] });
+  child = spawn(process.execPath, [path.join(root, 'bridge.mjs')], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   let diagnostic = '';
   child.stdout.on('data', d => diagnostic += d);
   child.stderr.on('data', d => diagnostic += d);

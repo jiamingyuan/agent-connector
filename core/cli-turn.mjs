@@ -2,23 +2,21 @@
 // adapters (Claude Code, Codex); an adapter only supplies the command, the stdin input and a
 // parser that turns each JSON event into { ready, sessionId, completed, failed, text, errorText, stats }.
 import fs from 'node:fs';
-import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { start, stop } from './process.mjs';
 
 export class TurnError extends Error {
   constructor(code, message) { super(message); this.code = code; }
 }
 
-function terminate(child) {
-  try { process.kill(-child.pid, 'SIGTERM'); }
-  catch { child.kill('SIGTERM'); }
-}
+// The CLI and the tools it started end together.
+const terminate = child => stop(child, { group: true });
 
 // Returns { cancel(), result }. result resolves to the final text, or null after cancel();
 // it rejects with TurnError code 'startup' | 'timeout' | 'failed'.
 export function runCliTurn({ bin, args, input, cwd, env, parse, outputFile, timeoutMs, startupTimeoutMs = 120_000,
   agentName, onSession, onStats }) {
-  const child = spawn(bin, args, { cwd, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = start(bin, args, { cwd, env, group: true, stdio: ['pipe', 'pipe', 'pipe'] });
   const job = { cancelled: false, timedOut: false, startupFailed: false };
   const startupTimer = setTimeout(() => { job.startupFailed = true; terminate(child); }, startupTimeoutMs);
   const timer = setTimeout(() => { job.timedOut = true; terminate(child); }, timeoutMs);
@@ -65,8 +63,8 @@ export function runCliTurn({ bin, args, input, cwd, env, parse, outputFile, time
 // Runs a CLI once and returns its result text, for non-turn queries such as /usage.
 export function runCliQuery({ bin, args, input, cwd, env, parse, timeoutMs = 60_000 }) {
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, args, { cwd, env, stdio: ['pipe', 'pipe', 'ignore'] });
-    const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs);
+    const child = start(bin, args, { cwd, env, stdio: ['pipe', 'pipe', 'ignore'] });
+    const timer = setTimeout(() => stop(child), timeoutMs);
     let text;
     createInterface({ input: child.stdout }).on('line', line => {
       try { const update = parse(JSON.parse(line)); if (update.text !== undefined) text = update.text; } catch { /* diagnostics */ }

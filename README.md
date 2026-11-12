@@ -154,7 +154,7 @@ lark-channel/     ◀──回复──  core/     ◀──最终回答──  
 | `lark-channel/` | 飞书：`lark-cli` 长连接收 `im.message.receive_v1`、过滤非 owner 和过期消息、去掉 @机器人、发回复、加表情、下载图片。`lark-cli` 1.0.98 起拒绝把下载写到 `/root` 下，图片先下载到系统临时目录中的私有目录（700），检查格式和大小后复制到工作区 `attachments/`，再删除临时目录。 |
 | `claude-code-agent/` | Claude Code：运行对话、权限模式、`/rename`、`/compact`、`/usage`、本机会话列表与前情梗概。 |
 | `codex-agent/` | Codex：运行对话（仅文字）、`/model`、`/effort`（这两项未用真实 Codex 验证），也是基于 `core/cli-turn.mjs` 的最小命令行 Agent 示例。 |
-| `service.mjs`、`service/` | 服务管理（systemd / launchd / 内置守护进程）与 `doctor` 检查，见[长期运行](#长期运行linux--macos)。 |
+| `service.mjs`、`service/` | 服务管理（systemd / launchd / 内置守护进程）与 `doctor` 检查，见[长期运行](#长期运行)。 |
 | `example-agent/` | 模板：不依赖外部程序的回声 Agent，复制改名即可开始接入；也可配置 `"agent": "example"` 不花模型额度地测试渠道。 |
 
 中枢只通过下面两个接口和两端交互。下面是摘要；**接入新模块时请读 [core/README.md](core/README.md)**，那里有接入步骤、每个参数和返回值的含义、可选功能的字段、配置与测试约定。
@@ -222,7 +222,7 @@ cp config.example.json config.json          # 或 Codex
 | `profile` | 飞书 CLI 的应用 profile。 |
 | `ownerOpenId` / `ownerOpenIds` | 允许向机器人发出请求的用户 open ID：一个用 `ownerOpenId`，多个用数组 `ownerOpenIds`，可同时写。名单里的每个人都被完全信任：他们驱动同一个 Agent、拥有本机同样的权限，也能用 `/sessions` 看到并进入本机的 Claude Code 会话；每个人的私聊各有独立的会话。 |
 | `botName` | 机器人展示名称，用于回复和说明。 |
-| `larkBin` / `claudeBin` / `codexBin` | 对应可执行文件路径，只需填写所选模块用到的。 |
+| `larkBin` / `claudeBin` / `codexBin` | 对应可执行文件路径，只需填写所选模块用到的。也可以写 `.js` / `.mjs` / `.cjs` 脚本，由 Node.js 运行。Windows 上的写法见[长期运行](#长期运行)。 |
 | `workspace` | Agent 的工作区绝对路径；收到的图片保存在其中的 `attachments/`。 |
 | `maxFileBytes` | 收文件的单个大小上限（字节），省略时为 100 MiB。发回文件不受此项影响（30 MB 以内直接发，更大的经云空间发链接，最多 1 GiB）。 |
 | `sessionDir` | 新会话的工作目录，省略时为运行用户的主目录，会话记录因此与终端里的会话放在一起。会话在此目录之外运行时，`workspace/CLAUDE.md` 会作为附加系统提示传给 Claude Code。 |
@@ -247,7 +247,7 @@ node bridge.mjs
 
 Codex 使用 `workspace-write` 沙箱和不交互审批策略；`skip_host_skill_discovery` 是 Codex CLI 开发中功能，CLI 版本变化后需验证兼容性。
 
-## 长期运行（Linux / macOS）
+## 长期运行
 
 `service.mjs` 在源码目录原地运行桥接程序，崩溃或退出后自动重启，按系统选择服务方式：
 
@@ -255,6 +255,7 @@ Codex 使用 `workspace-write` 沙箱和不交互审批策略；`skip_host_skill
 | --- | --- | --- | --- |
 | Linux（有 systemd，任意发行版） | root 安装为系统服务 `/etc/systemd/system/agent-connector.service`；普通用户安装为用户服务 `~/.config/systemd/user/` | 是；用户服务要在注销后继续运行并随开机启动，需执行一次 `loginctl enable-linger <用户名>` | `journalctl [--user] -u agent-connector` |
 | macOS | LaunchAgent `~/Library/LaunchAgents/com.agent-connector.plist`，退出后自动拉起 | 登录后启动 | `runtime/bridge.log` |
+| Windows | 内置守护进程（Node 实现），`install` 时在当前用户的注册表启动项（`HKCU\...\Run`）登记，不需要管理员权限 | 登录后启动（登录时会短暂出现一个命令行窗口） | `runtime\bridge.log` |
 | 其他（Docker 容器、没有 systemd 的 Linux），或加 `--supervisor` | 内置守护进程（Node 实现） | 否，容器或机器重启后需再执行 `node service.mjs start` | `runtime/bridge.log` |
 
 ```bash
@@ -266,7 +267,7 @@ node service.mjs doctor     # 检查环境与依赖工具（见下）
 node service.mjs stop | start | uninstall
 ```
 
-- Windows 不直接支持，请在 WSL 里按 Linux 方式运行。
+- Windows（未在真机验证，见[测试](#测试)）：`config.json` 里的路径用正斜杠或双反斜杠，如 `"C:/Users/me/.local/bin/claude.exe"`。可执行文件可以写 `.exe`，也可以写 `where lark-cli` 查到的 npm 启动脚本（`lark-cli.cmd`，或不带扩展名）：桥接程序会找出它实际运行的脚本或程序直接启动，不经过 `cmd.exe`，消息内容因此不会被当成命令解释；找不出时会报错，请改填 `.exe` 或 `.js` 的路径。停止任务和停止服务时会结束整个进程树。也可以在 WSL 里按 Linux 方式运行。
 - 项目原名 lark-agent-bridge。用旧版本装过 systemd 服务或 LaunchAgent 的，先用旧版本执行 `node service.mjs uninstall`（或删除 `lark-agent-bridge.service` / `com.lark-agent-bridge.plist`），再用新版本 `install`。
 - macOS 上 Node.js、`lark-cli`、`claude` 常装在 `/opt/homebrew/bin`，服务的 PATH 已包含它；`config.json` 里的可执行文件仍需写绝对路径（可用 `which claude` 查看）。
 - 使用 Claude Code 且工作区没有 `CLAUDE.md` 时，安装会从 `workspace/CLAUDE.example.md` 复制一份，已有文件不会被覆盖。
@@ -282,7 +283,9 @@ node service.mjs stop | start | uninstall
 npm test
 ```
 
-使用 Node.js 内置测试框架和模拟 CLI，不依赖真实飞书消息。覆盖消息过滤、会话隔离、超时和取消、回复拆分、图片处理、各 Agent 协议、指令（切换会话、权限模式、`/rename`、`/compact`、`/usage`）、新版 `lark-cli` 的图片格式，各系统的服务配置与 `doctor`，以及所有已登记模块是否满足接口。
+使用 Node.js 内置测试框架和模拟 CLI，不依赖真实飞书消息。覆盖消息过滤、会话隔离、超时和取消、回复拆分、图片处理、各 Agent 协议、指令（切换会话、权限模式、`/rename`、`/compact`、`/usage`）、新版 `lark-cli` 的图片格式，各系统的服务配置与 `doctor`、内置守护进程的启动和停止、外部程序的启动和结束，以及所有已登记模块是否满足接口。
+
+`.github/workflows/test.yml` 让 GitHub 在 Linux、macOS、Windows 三种系统上各跑一遍这套测试。测试只用模拟 CLI，不涉及飞书应用和任何密钥。
 
 ## 参考
 

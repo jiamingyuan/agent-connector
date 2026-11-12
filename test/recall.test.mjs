@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHub } from '../core/hub.mjs';
 import { createChannel } from '../lark-channel/index.mjs';
+import { fakeBin } from './harness.mjs';
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check, label) {
@@ -85,14 +86,12 @@ test('a channel without a withdrawal event is asked while the message is in flig
 test('the Feishu channel reads only the withdrawn flag of a message', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'recall-lark-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
-  const larkBin = path.join(root, 'lark');
-  await fs.writeFile(larkBin, `#!${process.execPath}
-const fs=require('fs'),path=require('path'),args=process.argv.slice(2);
+  const larkBin = await fakeBin(root, 'lark', `const fs=require('fs'),path=require('path'),args=process.argv.slice(2);
 fs.appendFileSync(path.join(__dirname,'args.jsonl'),JSON.stringify(args)+'\\n');
 const id=args[args.indexOf('GET')+1].split('/').pop();
 if(id==='om_missing')console.log(JSON.stringify({ok:false,error:{type:'api',code:99992354}}));
 else console.log(JSON.stringify({ok:true,error:null,data:{deleted:id==='om_gone'}}));
-`, { mode: 0o700 });
+`);
   const channel = createChannel({ larkBin, profile: 'fake' }, { root, env: process.env, log() {} });
   assert.equal(await channel.isRecalled({ id: 'om_gone' }), true);
   assert.equal(await channel.isRecalled({ id: 'om_here' }), false);

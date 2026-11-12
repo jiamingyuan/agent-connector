@@ -25,6 +25,9 @@ export function messageDirectory(config, messageId, kind) {
   return directory;
 }
 
+// For comparing paths. Windows ignores case and may report a folder under its short (8.3) or long name.
+const canonical = file => (process.platform === 'win32' ? fs.realpathSync.native(file).toLowerCase() : fs.realpathSync(file));
+
 export async function withStaging(prefix, run) {
   const staging = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   try { return await run(staging); } finally { fs.rmSync(staging, { recursive: true, force: true }); }
@@ -40,10 +43,10 @@ export async function download(runLark, staging, { messageId, key, type, output,
     throw new Error(failure);
   }
   const staged = path.resolve(staging, downloaded?.saved_path || '');
-  let real;
-  try { real = fs.realpathSync(staged); } catch { real = null; }
+  let real, inside = false;
+  try { real = fs.realpathSync(staged); inside = canonical(staged).startsWith(canonical(staging) + path.sep); } catch { real = null; }
   // The file itself must not be a symlink, and must resolve inside the private staging dir.
-  if (!real?.startsWith(staging + path.sep) || !fs.lstatSync(staged).isFile()) {
+  if (!real || !inside || !fs.lstatSync(staged).isFile()) {
     throw new Error('附件下载结果异常，本轮未交给 Agent。');
   }
   return real;

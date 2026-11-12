@@ -22,6 +22,11 @@ test('saved names are a single safe path component that keeps its extension', ()
   assert.equal(safeFileName('..', 'fallback'), 'fallback');
   assert.equal(safeFileName('.hidden', 'f'), 'hidden');
   assert.equal(safeFileName('x<>:"|?*.txt', 'f'), 'x_______.txt');
+  // Also valid on Windows: no trailing dots or spaces, no device names.
+  assert.equal(safeFileName('report. ', 'f'), 'report');
+  assert.equal(safeFileName('CON', 'f'), '_CON');
+  assert.equal(safeFileName('nul.txt', 'f'), '_nul.txt');
+  assert.equal(safeFileName('console.log', 'f'), 'console.log');
   const long = safeFileName('长'.repeat(200) + '.xlsx', 'f');
   assert(long.endsWith('.xlsx') && [...long].length === 120);
 });
@@ -44,7 +49,7 @@ test('files download through a private temp dir into the workspace under their o
   assert.equal(file.size, 9);
   assert(file.path.startsWith(path.join(config.workspace, 'attachments') + path.sep) && file.path.endsWith('/报告.pdf'));
   assert.equal(fs.readFileSync(file.path, 'utf8'), 'PDF bytes');
-  assert.equal(fs.statSync(file.path).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal(fs.statSync(file.path).mode & 0o777, 0o600);
   assert(!fs.existsSync(staging));
   assert.deepEqual(await prepareFiles({ message_id: 'om_t', message_type: 'text', content: 'hi' }, config, runLark), []);
   // The compact event may omit the key; the same message is fetched again.

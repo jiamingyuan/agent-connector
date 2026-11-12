@@ -78,7 +78,14 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
   function atomicJson(file, value) {
     const temp = `${file}.${process.pid}.tmp`;
     fs.writeFileSync(temp, JSON.stringify(value, null, 2) + '\n', { mode: 0o600 });
-    fs.renameSync(temp, file);
+    // Windows refuses the rename while another program (antivirus, indexer) has the file open.
+    for (let attempt = 0; ; attempt++) {
+      try { return fs.renameSync(temp, file); }
+      catch (error) {
+        if (process.platform !== 'win32' || attempt >= 5 || !['EPERM', 'EACCES', 'EBUSY'].includes(error.code)) throw error;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20 * (attempt + 1));
+      }
+    }
   }
   function save() {
     state.seen = [...seen].slice(-3000);

@@ -35,7 +35,7 @@ test('download exact message resources into private workspace files and pass byt
     // lark-cli refuses to write under /root, so downloads go to a private temp directory first.
     stagingDir = cwd;
     assert(cwd.startsWith(fs.realpathSync(os.tmpdir()) + path.sep) && !cwd.startsWith(config.workspace));
-    assert.equal(fs.statSync(cwd).mode & 0o777, 0o700);
+    if (process.platform !== 'win32') assert.equal(fs.statSync(cwd).mode & 0o777, 0o700);
     assert.equal(args[args.indexOf('--message-id') + 1], 'om_one');
     assert.equal(args[args.indexOf('--file-key') + 1], 'img_one');
     assert.equal(args[args.indexOf('--output') + 1], 'image-1');
@@ -49,8 +49,8 @@ test('download exact message resources into private workspace files and pass byt
   assert.equal(images.length, 1);
   assert.equal(images[0].data, jpeg.toString('base64'));
   assert.equal(images[0].mediaType, 'image/jpeg');
-  assert.equal(fs.statSync(images[0].path).mode & 0o777, 0o600);
-  assert.equal(fs.statSync(path.dirname(images[0].path)).mode & 0o777, 0o700);
+  if (process.platform !== 'win32') assert.equal(fs.statSync(images[0].path).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal(fs.statSync(path.dirname(images[0].path)).mode & 0o777, 0o700);
   assert(images[0].path.startsWith(path.join(config.workspace, 'attachments') + path.sep) && images[0].path.endsWith('image-1.jpg'));
   assert.deepEqual(fs.readFileSync(images[0].path), jpeg);
   assert(!fs.existsSync(stagingDir), 'staging directory is removed');

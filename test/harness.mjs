@@ -16,6 +16,24 @@ export async function copySources(root) {
   for (const name of sources) await fs.cp(path.join(sourceDir, name), path.join(root, name), { recursive: true });
 }
 
+// A fake CLI the bridge can start on any system: a script with a Node.js shebang, or on Windows
+// (which has no shebangs) a .cjs file, which the bridge runs under Node.js.
+export async function fakeBin(root, name, source) {
+  const file = path.join(root, process.platform === 'win32' ? `${name}.cjs` : name);
+  await fs.writeFile(file, `#!${process.execPath}\n${source}`, { mode: 0o700 });
+  return file;
+}
+
+// Stops a bridge that was started with an 'ipc' channel. Windows has no SIGTERM: kill() there would
+// leave the bridge's own child processes running in the test folder.
+export async function stopBridge(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  const closed = once(child, 'close');
+  if (process.platform === 'win32' && child.connected) child.send({ type: 'shutdown' }); else child.kill('SIGTERM');
+  await closed;
+}
+export const removeDir = dir => fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+
 export const privateEvent = { type: 'im.message.receive_v1', sender_type: 'user', sender_id: 'ou_owner', message_type: 'text',
   chat_type: 'p2p', chat_id: 'oc_private' };
 
@@ -26,12 +44,8 @@ export async function runBridge(t, build) {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'lark-bridge-test-')));
   let child;
   t.after(async () => {
-    if (child && child.exitCode === null && child.signalCode === null) {
-      const closed = once(child, 'close');
-      child.kill('SIGTERM');
-      await closed;
-    }
-    await fs.rm(root, { recursive: true, force: true });
+    await stopBridge(child);
+    await removeDir(root);
   });
   const { events, config = {}, state = { sessions: {}, seen: [], outbox: [] }, env = {}, failSummary = [], driveDenied = false, expectReplies = events.length } = await build(root);
   await copySources(root);
@@ -39,9 +53,7 @@ export async function runBridge(t, build) {
   await fs.writeFile(path.join(root, 'runtime/state.json'), JSON.stringify(state));
   await fs.writeFile(path.join(root, 'events.json'), JSON.stringify(events.map((event, index) => ({ message_id: `om_step_${index}`, ...event }))));
   await fs.writeFile(path.join(root, 'fake.json'), JSON.stringify({ failSummary, driveDenied }));
-  const fakeLark = path.join(root, 'lark');
-  await fs.writeFile(fakeLark, `#!${process.execPath}
-const fs=require('fs'),path=require('path'),root=__dirname,args=process.argv.slice(2),profile=args[args.indexOf('--profile')+1];
+  const fakeLark = await fakeBin(root, 'lark', `const fs=require('fs'),path=require('path'),root=__dirname,args=process.argv.slice(2),profile=args[args.indexOf('--profile')+1];
 if(args.includes('consume')){
  process.stderr.write('[event] ready event_key=im.message.receive_v1\\n');
  const events=JSON.parse(fs.readFileSync(path.join(root,'events.json'),'utf8'));let next=0;
@@ -49,7 +61,7 @@ if(args.includes('consume')){
   let answered=0;try{answered=fs.readFileSync(path.join(root,'replies.jsonl'),'utf8').trim().split('\\n').filter(Boolean).length;}catch{}
   if(next<events.length&&answered>=next){const {profile:to='fake',...event}=events[next];if(to===profile)console.log(JSON.stringify({...event,create_time:String(Date.now())}));next++;}
  },25);
- process.stdin.resume();
+ process.stdin.resume();process.stdin.on('end',()=>process.exit(0));
 }else{
  if(args.includes('+messages-reply')&&args.includes('--file')){
   // Like lark-cli: the file must be cwd-relative and outside /root.
@@ -91,10 +103,8 @@ if(args.includes('consume')){
  }
  console.log(JSON.stringify({ok:true,data:{}}));
 }
-`, { mode: 0o700 });
-  const fakeAgent = path.join(root, 'claude');
-  await fs.writeFile(fakeAgent, `#!${process.execPath}
-const fs=require('fs'),path=require('path'),root=__dirname,args=process.argv.slice(2);let input='';
+`);
+  const fakeAgent = await fakeBin(root, 'claude', `const fs=require('fs'),path=require('path'),root=__dirname,args=process.argv.slice(2);let input='';
 const {failSummary}=JSON.parse(fs.readFileSync(path.join(root,'fake.json'),'utf8'));
 process.stdin.on('data',x=>input+=x);process.stdin.on('end',()=>{
  const index=args.indexOf('--resume'),resumed=index<0?null:args[index+1],summary=args.includes('--fork-session');
@@ -140,12 +150,12 @@ process.stdin.on('data',x=>input+=x);process.stdin.on('end',()=>{
  }
  console.log(JSON.stringify({type:'result',subtype:'success',session_id:session,usage:summary?undefined:{input_tokens:4,cache_creation_input_tokens:14800,cache_read_input_tokens:60129,output_tokens:1234},result:summary?'- 目标：重构 alpha':'answer in '+path.basename(process.cwd())}));
 });
-`, { mode: 0o700 });
+`);
   await fs.writeFile(path.join(root, 'config.json'), JSON.stringify({
     backend: 'claude', profile: 'fake', ownerOpenId: 'ou_owner', botName: 'Cora', larkBin: fakeLark, claudeBin: fakeAgent,
     replyFormat: 'markdown', workspace: root, sessionDir: root, maxEventAgeMs: 300_000, turnTimeoutMs: 10_000, ...config,
   }));
-  child = spawn(process.execPath, [path.join(root, 'bridge.mjs')], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } });
+  child = spawn(process.execPath, [path.join(root, 'bridge.mjs')], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: { ...process.env, ...env } });
   let diagnostic = '';
   child.stdout.on('data', d => diagnostic += d);
   child.stderr.on('data', d => diagnostic += d);

@@ -61,5 +61,7 @@ function shutdown(signal) {
 }
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+// The built-in supervisor asks over its channel: Windows has no SIGTERM to ask with.
+process.on('message', message => { if (message?.type === 'shutdown') shutdown('supervisor'); });
 log('started', { botName: bots.map(bot => bot.name).join(', '), workspace: config.workspace, agent: agent.id, channel: [...new Set(bots.map(bot => bot.channel.id))].join(', ') });
 hub.start();

@@ -1,10 +1,10 @@
 // Channel adapter: Feishu / Lark through the official lark-cli. Implements the channel interface in
 // core/README.md: receives im.message.receive_v1 events, filters them, hands normalized messages to
 // the hub and sends the hub's replies back as the bot.
-import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import fs from 'node:fs';
 import path from 'node:path';
+import { start as startProgram, stop as stopProgram } from '../core/process.mjs';
 import { eventDecision, messageText, replyArgs, fileReplyArgs, cardReplyArgs } from './protocol.mjs';
 import { buildCard, fallbackText } from './card.mjs';
 import { withStaging } from './download.mjs';
@@ -36,9 +36,9 @@ export function createChannel(config, { root, env, log }) {
 
   function runLark(args, timeoutMs = 40_000, cwd = root) {
     return new Promise((resolve, reject) => {
-      const child = spawn(config.larkBin, [...larkArgs, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = startProgram(config.larkBin, [...larkArgs, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
       let stdout = '', stderr = '';
-      const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs);
+      const timer = setTimeout(() => stopProgram(child), timeoutMs);
       child.stdout.on('data', d => { stdout = (stdout + d).slice(-100_000); });
       child.stderr.on('data', d => { stderr = (stderr + d).slice(-20_000); });
       child.on('error', error => { clearTimeout(timer); reject(error); });
@@ -94,13 +94,13 @@ export function createChannel(config, { root, env, log }) {
 
   function start(handlers) {
     if (stopped) return;
-    listener = spawn(config.larkBin, [...larkArgs, 'event', 'consume', 'im.message.receive_v1', '--as', 'bot'], {
+    listener = startProgram(config.larkBin, [...larkArgs, 'event', 'consume', 'im.message.receive_v1', '--as', 'bot'], {
       cwd: root, env, stdio: ['pipe', 'pipe', 'pipe'],
     });
     // Keep this stdin pipe open: lark-cli intentionally exits on stdin EOF.
     listener.stdin.on('error', () => {});
     let sawReady = false;
-    const startupTimer = setTimeout(() => { log('listener_ready_timeout'); listener.kill('SIGTERM'); }, 60_000);
+    const startupTimer = setTimeout(() => { log('listener_ready_timeout'); stopProgram(listener); }, 60_000);
     createInterface({ input: listener.stdout }).on('line', line => {
       let event;
       try { event = JSON.parse(line); } catch (e) { log('event_parse_error', { type: e.name }); return; }
@@ -131,7 +131,7 @@ export function createChannel(config, { root, env, log }) {
     cards: config.replyFormat === 'card',
     formatNote,
     start,
-    stop() { stopped = true; clearTimeout(restartTimer); listener?.stdin.end(); listener?.kill('SIGTERM'); },
+    stop() { stopped = true; clearTimeout(restartTimer); listener?.stdin.end(); stopProgram(listener); },
     send: entry => (entry.file ? sendFile(entry) : entry.card ? sendCard(entry) : runLark(replyArgs(entry))),
     isPermanentSendError: error => error.permanent === true || PERMANENT_REPLY_ERRORS.has(error.detail?.code),
     // Up to 30 MB as a file reply (Feishu's limit, no empty files); larger ones as a Drive link.

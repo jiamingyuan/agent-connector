@@ -2,8 +2,10 @@
 // bridge depends on, so a CLI upgrade that breaks something shows up here instead of silently.
 // Prints no configuration values, message content or session content.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { launch, check } from '../core/process.mjs';
 import { agentId, channelId, loadAgent, loadChannel } from '../core/registry.mjs';
 import { botConfigs } from '../core/bots.mjs';
 
@@ -11,8 +13,10 @@ import { botConfigs } from '../core/bots.mjs';
 export const TESTED = { 'claude-code': '2.1.322', 'lark-cli': '1.0.99' };
 
 function version(bin) {
-  try { return /\d+\.\d+\.\d+/.exec(execFileSync(bin, ['--version'], { encoding: 'utf8', timeout: 15_000, stdio: ['ignore', 'pipe', 'pipe'] }))?.[0] || '?'; }
-  catch { return null; }
+  try {
+    const [command, leading] = launch(bin);
+    return /\d+\.\d+\.\d+/.exec(execFileSync(command, [...leading, '--version'], { encoding: 'utf8', timeout: 15_000, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }))?.[0] || '?';
+  } catch { return null; }
 }
 
 export async function runDoctor({ root, backend, print = console.log }) {
@@ -23,7 +27,7 @@ export async function runDoctor({ root, backend, print = console.log }) {
 
   print(`Platform: ${process.platform}, Node.js ${process.versions.node}, service mode: ${backend}`);
   if (Number(process.versions.node.split('.')[0]) < 20) fail('Node.js 20 or newer is required');
-  if (!['linux', 'darwin'].includes(process.platform)) fail('Supported platforms are Linux and macOS (Windows through WSL)');
+  if (!['linux', 'darwin', 'win32'].includes(process.platform)) fail('Supported platforms are Linux, macOS and Windows');
 
   const configFile = path.join(root, 'config.json');
   if (!fs.existsSync(configFile)) { fail('config.json is missing'); return 1; }
@@ -40,7 +44,7 @@ export async function runDoctor({ root, backend, print = console.log }) {
   } catch (error) { fail(error.message); return 1; }
 
   for (const bin of bins) {
-    try { fs.accessSync(bin, fs.constants.X_OK); } catch { fail(`not executable: ${bin}`); continue; }
+    try { check(bin); } catch (error) { fail(error.code ? `not executable: ${bin}` : error.message); continue; }
     const name = /lark/i.test(path.basename(bin)) ? 'lark-cli' : /claude/i.test(path.basename(bin)) ? 'claude-code' : path.basename(bin);
     const found = version(bin);
     if (!found) warn(`${bin}: --version failed`);
@@ -57,7 +61,7 @@ export async function runDoctor({ root, backend, print = console.log }) {
   // Claude Code's session files are internal formats; check they still parse.
   if (agentId(config) === 'claude-code') {
     const agent = (await loadAgent(config)).createAgent(config, { root, runtime: path.join(root, 'runtime'), env: process.env, log() {} });
-    const projects = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(process.env.HOME || '', '.claude'), 'projects');
+    const projects = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects');
     let transcripts = 0;
     try { for (const dir of fs.readdirSync(projects)) transcripts += fs.readdirSync(path.join(projects, dir)).filter(name => name.endsWith('.jsonl')).length; }
     catch { /* no projects yet */ }

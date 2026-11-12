@@ -16,6 +16,7 @@
 | `core/bots.mjs` | 机器人列表：把 `config.bots` 解析成每个机器人的配置和访问范围。 |
 | `core/registry.mjs` | 模块登记表：名称 → 目录。 |
 | `core/cli-turn.mjs` | 命令行类 Agent 共用的进程运行器。 |
+| `core/process.mjs` | 启动和结束外部程序：`start(bin, args, options)`、`stop(child)`。渠道或 Agent 要运行命令行工具时用它而不是直接 `spawn`，这样在 Windows 上也能启动 npm 装的工具、结束整个进程树，并且不经过 shell。 |
 | `core/text.mjs` | 回复拆分、会话名标题、幂等键、`safeLabel`。 |
 | `lark-channel/` | 飞书渠道（参考实现）。 |
 | `claude-code-agent/` | Claude Code（实现了全部可选功能的参考）。 |
