@@ -95,3 +95,18 @@ test('configured model and effort are the defaults; a chat can override them and
   assert(replies[4].text.includes('模型：opus（默认）') && replies[4].text.includes('推理深度：low（/effort 切换）'), replies[4].text);
   assert.deepEqual([state.models, state.efforts], [{}, { oc_private: 'low' }]);
 });
+
+test('after /model the card shows the chosen model until the next answer reports the one it ran on', { timeout: 20_000 }, async t => {
+  const { replies } = await runBridge(t, async () => ({
+    events: ['你好', '/model sonnet', '再来', '/model default', '/model haiku', '/model default'].map(content => ({ ...privateEvent, content })),
+    config: { replyFormat: 'card' },
+  }));
+  const tags = reply => reply.card.header.text_tag_list.map(tag => tag.text.content);
+  const model = reply => tags(reply).find(content => /claude|sonnet|haiku|opus/.test(content));
+  assert.equal(model(replies[0]), 'claude opus 5.5', 'the answer shows the model it ran on');
+  assert.equal(model(replies[1]), 'sonnet', 'the reply to /model already shows the new choice');
+  assert.equal(model(replies[2]), 'claude opus 5.5', 'the next answer shows what the agent reported');
+  assert.equal(model(replies[3]), undefined, 'back to the agent default: no model until the next answer');
+  assert.equal(model(replies[4]), 'haiku');
+  assert.equal(model(replies[5]), undefined);
+});

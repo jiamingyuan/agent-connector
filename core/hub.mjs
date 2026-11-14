@@ -164,7 +164,8 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     let mode;
     if (agent.modes) { try { mode = modeOf(message); } catch { /* invalid config */ } }
     const stats = current?.stats || {};
-    // The model shown is the one the session last ran on; the effort is the one in effect for the chat.
+    // The model shown is the one the session last ran on, or the one chosen with /model since then;
+    // the effort is the one in effect for the chat.
     return { title: sessionTitle(current), mode: mode && { name: mode, risky: Boolean(agent.modes.privateOnly?.includes(mode)) },
       model: stats.model, effort: agent.efforts ? choice('effort', message) : stats.effort, context: stats.context, quota: state.quota, turn };
   }
@@ -828,6 +829,13 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     if (!reset && allowed !== 'all' && !allowed.includes(value)) return reply(message, `机器人 ${bot.name} 不能使用${label} ${value}（可用：${allowed.join('、')}）。`, kind);
     if (value === current) return reply(message, `当前${label}已经是 ${choiceName(value)}。`, kind);
     if (value === fallback) delete store[message.chat]; else store[message.chat] = value;
+    // Until the next answer reports the model it really ran on, the header shows the one just chosen
+    // (none when the choice is the agent's own default), not the one the session last ran on.
+    const session = state.sessions[message.chat];
+    if (kind === 'model' && session) {
+      const { model, ...rest } = session.stats || {};
+      session.stats = { ...rest, ...(value ? { model: value } : {}) };
+    }
     save();
     log(`${kind}_changed`, { chatId: message.chat, messageId: message.id, [kind]: value || 'default' });
     return reply(message, `已将${label}切换为 ${choiceName(value)}${value === fallback ? '（默认）' : ''}${part.descriptions[value] ? `：${part.descriptions[value]}` : ''}。从下一条消息开始生效${value === fallback ? '' : `，${command} default 可恢复默认`}。`, kind);
