@@ -173,6 +173,7 @@ export function createChannel(config, context) {
   return {
     id: 'foo', displayName: 'Foo',  // displayName 出现在回复和提示词里，如“这条消息是用户在Foo里发来的”
     richText: true,                 // 能发 Markdown 时为 true
+    threads: false,                 // 可选：为 true 时支持话题：消息带 thread，回复条目可带 inThread（/to 用）
     cards: false,                   // 可选：为 true 时回复条目不带首行，而带 card 信息（会话名、模式、模型、上下文、额度、本轮 token），由 send 自行绘制
     formatNote: '[Foo回复格式]\n…', // richText 时附在每轮输入末尾的回复格式要求
     start(handlers), stop(),
@@ -210,6 +211,7 @@ export function createChannel(config, context) {
 | `userId` | 发送者 ID（可选）。中枢原样带到发回文件的回复条目上，供渠道给该用户开通链接的访问权限。 |
 | `kind` | `'text'` 纯文字、`'rich'` 富文本（可能含图）、`'image'` 纯图片、`'file'` 文件（含文件夹，由渠道决定是否拒绝）、`'other'` 其他（中枢回复“目前支持文字对话”）。 |
 | `text` | 用户文字，已去掉开头的 @机器人。中枢只把已知指令（`/new`、`/status` 等）当作指令，其余文字都交给 Agent。 |
+| `thread` | 可选，仅 `threads` 为 true 的渠道：消息发在话题里时，话题所挂的那条消息的 `id`。中枢用它把 `/to` 开的话题里的消息交给对应的会话；其他话题里的消息照常属于所在聊天。 |
 | `raw` | 平台原始事件，留给渠道自己后续使用（如下载图片），中枢不读取。 |
 
 ### 撤回的消息
@@ -231,6 +233,7 @@ export function createChannel(config, context) {
 | `format` | `'markdown'` 或 `'text'`。只有 `richText` 为 true 时才会出现 `'markdown'`。 |
 | `key` | 稳定的幂等键（同一回复重试时不变），平台支持时用于去重。 |
 | `kind` | 回复类别（`answer`、`status`、`error`、`file` 等），只用于日志。 |
+| `inThread` | 可选，为 true 时这条回复要在 `messageId` 那条消息上开一个话题，发在话题里（`/to` 的回答）。只会出现在 `threads` 为 true 的渠道上；回复本来就在话题里的消息时不会带它，渠道照常回复即可留在话题里。 |
 | `file`、`name` | 仅文件回复：要发送的本地文件路径和文件名。没有 `text`。发送成功后中枢删除该文件；文件已不存在时抛出带 `permanent: true` 的错误，中枢会丢弃这一条。 |
 
 - `send` 成功时 resolve；失败时 reject，错误上设 `channel: true`，`detail` 放平台错误详情。

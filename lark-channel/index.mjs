@@ -25,9 +25,12 @@ const KINDS = { text: 'text', post: 'rich', image: 'image', file: 'file', folder
 export const formatNote = '[飞书回复格式]\n除非用户本轮另有格式要求：先给结论，短段落之间留空行；简短问题直接回答，不套报告模板。可使用少量加粗、简洁列表、命名链接和带语言标签的代码块；避免多层标题、嵌套列表、长段工具日志和满屏加粗。用户要求文档时，把详细正文写入文档，聊天只给简短结论和文档链接。';
 
 // The hub's channel-neutral view of one Lark message; raw keeps the event for Lark-only work.
+// `thread`: for a message in a thread (topic), the ID of the message the thread hangs on. A quoted
+// reply outside a thread also has a root_id but no thread_id, so it is not a thread message.
 export function normalize(event, config) {
   return { id: event.message_id, chatId: event.chat_id, chatType: event.chat_type === 'p2p' ? 'private' : 'group',
-    userId: event.sender_id, kind: KINDS[event.message_type] || 'other', text: messageText(event, config), raw: event };
+    userId: event.sender_id, kind: KINDS[event.message_type] || 'other', text: messageText(event, config),
+    ...(event.thread_id && /^om_[A-Za-z0-9_-]+$/.test(event.root_id || '') ? { thread: event.root_id } : {}), raw: event };
 }
 
 export function createChannel(config, { root, env, log }) {
@@ -129,6 +132,8 @@ export function createChannel(config, { root, env, log }) {
     displayName: '飞书',
     richText: config.replyFormat === 'markdown' || config.replyFormat === 'card',
     cards: config.replyFormat === 'card',
+    // Replies can open a thread on the message they answer (entry.inThread), and messages in a thread carry `thread`.
+    threads: true,
     formatNote,
     start,
     stop() { stopped = true; clearTimeout(restartTimer); listener?.stdin.end(); stopProgram(listener); },

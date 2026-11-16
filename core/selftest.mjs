@@ -268,6 +268,10 @@ export function channelChecks(channel) {
     { id: 'recall-read', title: '读取消息是否被撤回', when: () => (channel.isRecalled ? undefined : lacks('撤回状态查询（渠道自己上报撤回时不需要）')), async run(context) {
       if (await channel.isRecalled(context.message) !== false) throw new Error('把一条没有撤回的消息报成了已撤回');
     } },
+    { id: 'thread', title: '在话题中回复（/to）', when: () => (channel.threads ? undefined : lacks('话题')), async run(context) {
+      await send(context, 'thread', { format: 'text', text: '接入测试：这条回复应该开在你那条消息的话题里，而不是主聊天里。', inThread: true });
+      return '请看一眼这条回复是否在话题里';
+    } },
     ...(hints.checks || []),
     { id: 'get-image', title: '接收图片', when: () => (channel.attachments ? undefined : lacks('图片接收')), async run(context) {
       const message = await context.ask('请发一张图片（不想测这一项就回复“跳过”）。', item => ['image', 'rich'].includes(item.kind));
@@ -282,6 +286,10 @@ export function channelChecks(channel) {
       if (!files.length) throw new Error('没有从这条消息里取到文件');
       for (const file of files) fs.rmSync(file.path, { force: true });
       return `取到「${short(files[0].name)}」`;
+    } },
+    { id: 'thread-receive', title: '接收话题里的消息（/to）', when: () => (channel.threads ? undefined : lacks('话题')), async run(context) {
+      const message = await context.ask('请在上面“在话题中回复”那条测试回复所在的话题里回复任意一句话（不想测这一项就在主聊天回复“跳过”）。', item => Boolean(item.thread));
+      if (message.thread !== context.message.id) throw new Error('收到了话题消息，但它挂在另一条消息下');
     } },
     { id: 'recall', title: '撤回消息后中断', when: () => (channel.isRecalled ? undefined : '这个渠道自己上报撤回，不在这里测'), async run(context) {
       const message = await context.ask('请发任意一条文字消息，然后在 30 秒内把它撤回（不想测这一项就回复“跳过”）。', item => item.kind === 'text');

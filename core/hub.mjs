@@ -27,6 +27,9 @@ export function commandArgs(text, name) {
   return text.startsWith(name) && /\s/u.test(text[name.length]) ? text.slice(name.length).trim() : null;
 }
 
+// Commands that would change which session a /to thread talks to; they belong in the chat itself.
+const THREAD_REFUSED = ['/new', '/temp', '/keep', '/dir', '/switch', '/to', '/test'];
+
 export function createHub({ config, agent, channel, bots: botList, runtime, log }) {
   const stateFile = path.join(runtime, 'state.json');
   const statusFile = path.join(runtime, 'status.json');
@@ -169,6 +172,9 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     return { title: sessionTitle(current), mode: mode && { name: mode, risky: Boolean(agent.modes.privateOnly?.includes(mode)) },
       model: stats.model, effort: agent.efforts ? choice('effort', message) : stats.effort, context: stats.context, quota: state.quota, turn };
   }
+  // Replies to the /to message itself are what opens its thread; replies to messages already in the
+  // thread stay there on their own.
+  const inThread = message => (message.startThread ? { inThread: true } : {});
   function reply(message, text, kind = 'answer', turn) {
     if (recalled.has(message.uid)) return Promise.resolve();
     const { channel } = botOf(message);
@@ -187,7 +193,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
       // The header details go on the first card, this turn's totals on the last.
       const partCard = card && { ...card, quota: index === 0 ? card.quota : undefined, turn: index === parts.length - 1 ? card.turn : undefined };
       if (!state.outbox.some(entry => entry.key === key)) state.outbox.push({
-        messageId: message.id, chatId: message.chatId, ...(message.bot ? { bot: message.bot } : {}), text: part, format, kind, key, createdAt: Date.now(), ...(partCard ? { card: partCard } : {}),
+        messageId: message.id, chatId: message.chatId, ...(message.bot ? { bot: message.bot } : {}), ...inThread(message), text: part, format, kind, key, createdAt: Date.now(), ...(partCard ? { card: partCard } : {}),
       });
     }
     save();
@@ -511,7 +517,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
       if (!size) { notes.push(`「${name}」是空文件，没有发送。`); continue; }
       if (size > sendLimit(channel)) { notes.push(`「${name}」（${sizeText(size)}）超过 ${sizeText(sendLimit(channel))}，没有发送，留在本机工作区的 outbox 目录。`); continue; }
       if (queued >= OUTGOING_FILES_LIMIT) { notes.push(`「${name}」超出每次最多 ${OUTGOING_FILES_LIMIT} 个文件，没有发送，留在本机工作区的 outbox 目录。`); continue; }
-      state.outbox.push({ messageId: message.id, chatId: message.chatId, ...(message.bot ? { bot: message.bot } : {}), userId: message.userId, file, name: item.name, kind: 'file',
+      state.outbox.push({ messageId: message.id, chatId: message.chatId, ...(message.bot ? { bot: message.bot } : {}), ...inThread(message), userId: message.userId, file, name: item.name, kind: 'file',
         key: replyKey(message.uid, 'file', queued++), createdAt: Date.now() });
     }
     if (queued) { save(); log('files_queued', { messageId: message.id, count: queued }); }
@@ -632,6 +638,52 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
       '直接发消息即可在这个会话里继续。',
     ].filter(Boolean).join('\n\n'), 'switch');
   }
+  // ---- /to: a message to another session, answered in a thread ----
+  // "/to <session> <text>" says the text to the named session without changing the chat's own
+  // session. The answer opens a thread on that message, and whatever is sent in the thread later
+  // goes to the same session. A thread is a chat of its own (key "<chat>#<root message ID>", with its
+  // own session record, queue and /stop) that follows its chat's mode, model and effort. The session
+  // is named as for /switch; a name may contain spaces, so the longest name that matches wins.
+  const threadKey = (chat, root) => `${chat}#${root}`;
+  function splitTarget(message, query) {
+    const all = catalog(message);
+    const own = state.sessions[message.chat]?.id;
+    const listed = state.listings[message.chat] || sessions.filter(all, '', { include: [own] }).slice(0, LIST_LIMIT).map(session => session.id);
+    if (sessions.pick(all, query, listed).length) return { problem: `请在会话后面写上要发的正文。${TO_USAGE}` };
+    const cuts = [...query.matchAll(/\s+/gu)].map(match => [match.index, match.index + match[0].length]).reverse();
+    for (const [end, rest] of cuts) {
+      const matches = sessions.pick(all, query.slice(0, end), listed);
+      if (matches.length > 1) return { problem: `有 ${matches.length} 个会话匹配「${safeLabel(query.slice(0, end))}」，请改用编号或会话 ID：\n`
+        + matches.slice(0, LIST_LIMIT).map(session => `${session.id.slice(0, 8)} · ${session.name} · ${session.cwd}`).join('\n') };
+      if (matches.length) return { session: matches[0], text: query.slice(rest) };
+    }
+    return { problem: cuts.length ? `没有找到会话「${safeLabel(query.split(/\s/u)[0])}」。发 /sessions 查看会话列表。` : TO_USAGE };
+  }
+  const TO_USAGE = '用法：/to 会话 正文。会话的写法和 /switch 一样（编号、会话 ID 开头几位或完整会话名），回答会在这条消息的话题里，之后在话题里发的消息都进这个会话。';
+  // Checked when /to arrives (it only reads files); returns the thread's first message, or null after
+  // replying why not.
+  function openThread(message, query) {
+    const fail = text => { void reply(message, text, 'to').catch(logReplyError); return null; };
+    const refusal = sessionCommandRefusal(message);
+    if (refusal) return fail(refusal.replace('会话切换', '/to '));
+    if (message.parentChat) return fail('话题里不能再用 /to，请回到主聊天里发。');
+    if (!botOf(message).channel.threads) return fail(`${where(message)}不支持话题，不能使用 /to。`);
+    if (!query) return fail(TO_USAGE);
+    const { session, text, problem } = splitTarget(message, query);
+    if (problem) return fail(problem);
+    const holder = holderOf(session.id, message);
+    if (holder) return fail(`会话「${session.name}」正由机器人 ${holder} 开着，不能同时使用。在 ${holder} 那边发 /new 或 /switch 离开后再试。`);
+    if (!fs.existsSync(session.cwd)) return fail(`会话目录 ${session.cwd} 已不存在，无法恢复这个会话。`);
+    if (sessions.running().get(session.id)?.busy && !sessionWork.has(session.id)) return fail(`会话「${session.name}」正在终端里执行任务，等它结束后再发。`);
+    const chat = threadKey(message.chat, message.id);
+    const stats = sessions.stats?.(session.file);
+    state.sessions[chat] = { id: session.id, cwd: session.cwd, name: session.name, file: session.file, thread: true,
+      updatedAt: new Date().toISOString(), ...(stats?.model ? { stats } : {}) };
+    save();
+    log('thread_opened', { chatId: message.chat, messageId: message.id });
+    return { ...message, chat, parentChat: message.chat, startThread: true, text };
+  }
+
   // ---- /delete ----
   // Any listed session can be deleted, the user's terminal ones included, after a confirmation. The
   // files go to runtime/trash, so the session leaves this list and the terminal's /resume alike.
@@ -735,6 +787,8 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
 
   // ---- permission modes (/mode) ----
   const modes = agent.modes;
+  // A thread opened with /to has its own session but follows the settings of the chat it is in.
+  const settingsChat = message => message.parentChat || message.chat;
   // What a bot may use: its `access` can narrow the permission modes and models its chats pick from.
   // The value in effect for a chat is its own choice while the bot may use it, else the bot's default:
   // the agent's default when the bot may use that, otherwise the first one on the bot's list.
@@ -744,14 +798,14 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
   function inEffect(kind, message, own = true) {
     const part = parts[kind], allowed = allowedOf(kind, botOf(message));
     const usable = value => allowed === 'all' || allowed.includes(value);
-    const chosen = own ? stores[kind][message.chat] : undefined;
+    const chosen = own ? stores[kind][settingsChat(message)] : undefined;
     if (chosen && usable(chosen)) return part.resolve(chosen);
     const fallback = part.resolve();
     return usable(fallback) ? fallback : part.resolve(allowed[0]);
   }
   const modeOf = message => inEffect('mode', message);
   // For a turn: with an invalid configuration the agent reports the problem itself.
-  const chosenMode = message => { try { return modes ? modeOf(message) : undefined; } catch { return state.modes[message.chat]; } };
+  const chosenMode = message => { try { return modes ? modeOf(message) : undefined; } catch { return state.modes[settingsChat(message)]; } };
   // Names on a bot's lists are written the way the agent spells them; an unknown one stops the start.
   for (const bot of bots.values()) for (const kind of ['mode', 'model']) {
     const allowed = allowedOf(kind, bot);
@@ -780,7 +834,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     // Group members can see replies; a group is not where every safeguard should be switched off.
     if (modes.privateOnly?.includes(mode) && message.chatType !== 'private') return reply(message, `群聊里不能切换到 ${mode}，请在私聊中使用。`, 'mode');
     if (mode === current) return reply(message, `当前已经是 ${mode} 模式。`, 'mode');
-    if (mode === fallback) delete state.modes[message.chat]; else state.modes[message.chat] = mode;
+    if (mode === fallback) delete state.modes[settingsChat(message)]; else state.modes[settingsChat(message)] = mode;
     save(); status();
     log('mode_changed', { chatId: message.chat, messageId: message.id, mode });
     return reply(message, `已切换到 ${mode} 模式${mode === fallback ? '（默认）' : ''}：${modes.descriptions[mode]}。`
@@ -828,7 +882,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     if (!reset && !value) return reply(message, `没有「${safeLabel(query)}」这个${label}。\n\n${choiceOverview(kind, message)}`, kind);
     if (!reset && allowed !== 'all' && !allowed.includes(value)) return reply(message, `机器人 ${bot.name} 不能使用${label} ${value}（可用：${allowed.join('、')}）。`, kind);
     if (value === current) return reply(message, `当前${label}已经是 ${choiceName(value)}。`, kind);
-    if (value === fallback) delete store[message.chat]; else store[message.chat] = value;
+    if (value === fallback) delete store[settingsChat(message)]; else store[settingsChat(message)] = value;
     // Until the next answer reports the model it really ran on, the header shows the one just chosen
     // (none when the choice is the agent's own default), not the one the session last ran on.
     const session = state.sessions[message.chat];
@@ -858,7 +912,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
       `Agent（${agentName}）：${testList(agentChecks(agent))}`,
       `渠道（${where(message)}）：${testList(channelChecks(bot.channel))}`,
       '用法：/test all 全部；/test agent 只测 Agent；/test channel 只测渠道；/test 项目名 只测指定项，可写多个（如 /test image file）。',
-      `Agent 部分会进行约二十次很短的模型调用，大约 2 到 3 分钟，在一个单独的测试会话里进行，结束后删除这个会话。渠道部分里接收图片、接收文件、撤回这几项需要你按提示发消息，每项都可以回复“跳过”。测试期间发 /stop 可以停止；这个聊天里的其他消息会等测试结束后再处理。`,
+      `Agent 部分会进行约二十次很短的模型调用，大约 2 到 3 分钟，在一个单独的测试会话里进行，结束后删除这个会话。渠道部分里接收图片、接收文件、话题、撤回这几项需要你按提示发消息，每项都可以回复“跳过”。测试期间发 /stop 可以停止；这个聊天里的其他消息会等测试结束后再处理。`,
       `上次测试：Agent ${last(state.selftest.agents[agent.id])}；渠道 ${last(state.selftest.bots[botKey(bot)])}。`].join('\n');
   }
   // Asked once per agent and once per bot, in the first private chat after it was connected.
@@ -973,6 +1027,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     lines.push('/test [all | agent | channel | 项目名]：接入测试，用真实的 Agent 和渠道逐项检查功能是否可用（仅私聊）');
     if (sessions) lines.push(`/sessions：列出本机可切换的 ${agentName} 会话（仅私聊；/sessions all 包括脚本会话，/sessions 关键词 筛选）`,
       '/switch 编号：切换到列表中的任一会话，并收到前情梗概');
+    if (sessions && channel.threads) lines.push('/to 会话 正文：把正文发给另一个会话，不切换当前会话；回答在这条消息的话题里，之后在话题里发的消息都进那个会话（仅私聊）');
     if (sessions?.trash) lines.push('/delete 编号：删除列表中的会话，可一次写多个（如 1 3 5-7；需再次确认；终端的 /resume 里也会消失）');
     lines.push('/help：使用说明');
     return lines.join('\n');
@@ -1029,9 +1084,15 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     const { channel } = botOf(message);
     if (superseded(message, generation)) return;
     const text = (message.text || '').trim();
+    // The text of /to is only ever said to the session: none of it is read as a command.
+    const command = message.startThread ? '' : text;
+    if (message.parentChat && !message.startThread) {
+      const refused = THREAD_REFUSED.find(name => commandArgs(command, name) !== null);
+      if (refused) return reply(message, `这个话题固定对应会话「${state.sessions[message.chat]?.name || '未命名'}」，话题里不能用 ${refused}。要换会话或开新会话，请回到主聊天里发。`, 'thread');
+    }
     // /new and /temp may name the directory for this one session; the chat's own directory (/dir) stays.
     for (const [name, temp] of [['/new', false], ['/temp', true]]) {
-      const where = commandArgs(text, name);
+      const where = commandArgs(command, name);
       if (where === null) continue;
       const kind = name.slice(1);
       const chosen = where ? directoryFor(message, where) : {};
@@ -1043,25 +1104,25 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
         : `已开启${temp ? '临时' : '新'}会话，下一条消息会创建新的 ${agentName} 上下文。`;
       return reply(message, `${left}${place}${temp ? `离开它时（/new、/temp${sessions ? '、/switch' : ''}）会自动删除；想留下来就发 /keep。` : ''}`, kind);
     }
-    if (text === '/keep') return keepSession(message);
-    const dirQuery = commandArgs(text, '/dir');
+    if (command === '/keep') return keepSession(message);
+    const dirQuery = commandArgs(command, '/dir');
     if (dirQuery !== null) return changeDir(message, dirQuery);
-    if (text === '/exit') return reply(message, '会话之间不再有主次，/exit 已取消：发 /switch 编号 切换到任一会话，或 /new 开新会话。', 'exit');
-    const renameQuery = commandArgs(text, '/rename');
+    if (command === '/exit') return reply(message, '会话之间不再有主次，/exit 已取消：发 /switch 编号 切换到任一会话，或 /new 开新会话。', 'exit');
+    const renameQuery = commandArgs(command, '/rename');
     if (renameQuery !== null) return renameSession(message, renameQuery, generation);
-    const compactQuery = commandArgs(text, '/compact');
+    const compactQuery = commandArgs(command, '/compact');
     if (compactQuery !== null) return compactSession(message, compactQuery, generation);
-    const modeQuery = commandArgs(text, '/mode');
+    const modeQuery = commandArgs(command, '/mode');
     if (modeQuery !== null) return changeMode(message, modeQuery);
     for (const kind of ['model', 'effort']) {
-      const query = commandArgs(text, choices[kind].command);
+      const query = commandArgs(command, choices[kind].command);
       if (query !== null) return changeChoice(message, kind, query);
     }
-    const testQuery = commandArgs(text, '/test');
+    const testQuery = commandArgs(command, '/test');
     if (testQuery !== null) return runTest(message, testQuery, generation);
-    const switchQuery = commandArgs(text, '/switch');
+    const switchQuery = commandArgs(command, '/switch');
     if (switchQuery !== null) return switchSession(message, switchQuery, generation);
-    const deleteQuery = sessions?.trash ? commandArgs(text, '/delete') : null;
+    const deleteQuery = sessions?.trash ? commandArgs(command, '/delete') : null;
     if (deleteQuery !== null) return deleteSession(message, deleteQuery);
     if (message.kind === 'file') return receiveFiles(message, generation);
     if (!['text', 'rich'].includes(message.kind) && !(agent.capabilities.images && message.kind === 'image')) {
@@ -1070,7 +1131,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     if (!text && message.chatType === 'group' && message.kind === 'text') return reply(message, '我在，@我并发送问题就能开始。', 'help');
     if (!text && message.kind !== 'image') return;
     if (text.length > 40_000) return reply(message, '消息过长，请拆分后发送。', 'limit');
-    if (text === '/help') return reply(message, helpText(message), 'help');
+    if (command === '/help') return reply(message, helpText(message), 'help');
     const target = chatTarget(message);
     const problem = target.id && sessionProblem(target, message);
     if (problem) return reply(message, problem, 'blocked');
@@ -1112,6 +1173,8 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     // Chats and messages are keyed per bot: two bots in one group each get the same message.
     const prefix = bot.id ? `${bot.id}:` : '';
     const message = { ...incoming, bot: bot.id, chat: prefix + incoming.chatId, uid: prefix + incoming.id };
+    // A message in a thread opened with /to belongs to that thread's session; other threads are the chat's.
+    if (incoming.thread && state.sessions[threadKey(message.chat, incoming.thread)]) Object.assign(message, { parentChat: message.chat, chat: threadKey(message.chat, incoming.thread) });
     if (seen.has(message.uid)) return;
     seen.add(message.uid);
     if (seen.size > 4000) { for (const id of [...seen].slice(0, 1000)) seen.delete(id); }
@@ -1131,6 +1194,12 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     if (test) { test.inbox.push(message); test.wake?.(); return; }
     offerTest(message, command);
     if (command === '/usage') { void showUsage(message).catch(logReplyError); return; }
+    const toQuery = commandArgs(command, '/to');
+    if (toQuery !== null) {
+      const first = openThread(message, toQuery);
+      if (first) enqueue(first);
+      return;
+    }
     // Listing only reads files, so it answers at once instead of waiting behind a running task.
     const sessionsQuery = commandArgs(command, '/sessions');
     if (sessionsQuery !== null) {

@@ -38,17 +38,21 @@ export function messageText(event, config) {
   return text;
 }
 
+// Set on a reply that opens a thread on the message it answers (/to); replies to a message already
+// in a thread stay in it without this.
+const threadArgs = entry => (entry.inThread ? ['--reply-in-thread'] : []);
+
 // A file reply: lark-cli uploads the cwd-relative file, then replies with it.
 export function fileReplyArgs(entry, name) {
-  return ['im', '+messages-reply', '--as', 'bot', '--message-id', entry.messageId, '--file', name, '--idempotency-key', entry.key];
+  return ['im', '+messages-reply', '--as', 'bot', '--message-id', entry.messageId, '--file', name, ...threadArgs(entry), '--idempotency-key', entry.key];
 }
 
 export function cardReplyArgs(entry, card) {
   return ['im', '+messages-reply', '--as', 'bot', '--message-id', entry.messageId, '--msg-type', 'interactive',
-    '--content', JSON.stringify(card), '--idempotency-key', entry.key];
+    '--content', JSON.stringify(card), ...threadArgs(entry), '--idempotency-key', entry.key];
 }
 
 export function replyArgs(entry) {
   return ['im', '+messages-reply', '--as', 'bot', '--message-id', entry.messageId,
-    entry.format === 'markdown' ? '--markdown' : '--text', entry.text, '--idempotency-key', entry.key];
+    entry.format === 'markdown' ? '--markdown' : '--text', entry.text, ...threadArgs(entry), '--idempotency-key', entry.key];
 }

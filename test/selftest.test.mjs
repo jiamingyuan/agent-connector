@@ -139,7 +139,8 @@ test('/test lists the checks; /test all runs every agent and channel check and r
   for (const line of ['✅ 对话', '✅ 续接会话', '✅ 看图片', '✅ 读收到的文件', '✅ 保存要发回的文件', '✅ 权限模式：normal、strict；未测高风险的 danger',
     '✅ 切换模型：stub-small（实际 stub-small）', '✅ 切换推理深度：low', '✅ 回复卡片上的统计：已报告模型、上下文、本轮用量；未报告额度', '✅ /rename 改名', '✅ /sessions 会话列表',
     '✅ /switch 前情梗概', '✅ /compact 压缩上下文', '✅ /usage 用量', '✅ 模块自己的检查：会话 session-1', '✅ /stop 停止任务：0 秒内停下', '✅ 超时停止', '✅ /delete 删除会话：测试会话已移到回收目录']) assert(agentReport.includes(line), `${line}\n${agentReport}`);
-  assert(channelReport.startsWith('**渠道：测试（Cora）**：通过 9 项，失败 0 项，跳过 1 项'), channelReport);
+  assert(channelReport.startsWith('**渠道：测试（Cora）**：通过 9 项，失败 0 项，跳过 3 项'), channelReport);
+  assert(channelReport.includes('➖ 在话题中回复（/to）：测试渠道没有提供话题') && channelReport.includes('➖ 接收话题里的消息（/to）：测试渠道没有提供话题'), channelReport);
   for (const line of ['✅ 接收消息', '✅ 收到消息时的表情回应', '✅ 文字回复', '✅ 富文本回复', '✅ 卡片回复', '✅ 发回文件', '✅ 读取消息是否被撤回',
     '✅ 接收图片：取到 1 张，image/png', '➖ 接收文件：已按你的回复跳过', '✅ 撤回消息后中断']) assert(channelReport.includes(line), `${line}\n${channelReport}`);
   assert(!channelReport.includes('很重的检查'), 'a check marked manual is left out of "all"');

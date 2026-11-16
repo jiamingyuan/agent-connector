@@ -67,17 +67,17 @@ if(args.includes('consume')){
   // Like lark-cli: the file must be cwd-relative and outside /root.
   const name=args[args.indexOf('--file')+1];
   if(path.isAbsolute(name)||name.includes('..')||process.cwd().startsWith('/root'))return console.log(JSON.stringify({ok:false,error:{type:'validation',subtype:'invalid_argument'}}));
-  fs.appendFileSync(path.join(root,'replies.jsonl'),JSON.stringify({id:args[args.indexOf('--message-id')+1],profile,format:'file',text:name,cwd:process.cwd(),content:fs.readFileSync(name,'utf8').slice(0,40)})+'\\n');
+  fs.appendFileSync(path.join(root,'replies.jsonl'),JSON.stringify({id:args[args.indexOf('--message-id')+1],profile,...(args.includes('--reply-in-thread')?{thread:true}:{}),format:'file',text:name,cwd:process.cwd(),content:fs.readFileSync(name,'utf8').slice(0,40)})+'\\n');
   return console.log(JSON.stringify({ok:true,data:{}}));
  }
  if(args.includes('+messages-reply')&&args.includes('--msg-type')){
   const card=JSON.parse(args[args.indexOf('--content')+1]);
   if(card.header?.title?.content==='REJECT-CARD')return console.log(JSON.stringify({ok:false,error:{type:'api',code:230099,subtype:'invalid_card'}}));
-  fs.appendFileSync(path.join(root,'replies.jsonl'),JSON.stringify({id:args[args.indexOf('--message-id')+1],profile,format:'card',card,text:card.body.elements.filter(e=>e.tag==='markdown').map(e=>e.content).join('\\n')})+'\\n');
+  fs.appendFileSync(path.join(root,'replies.jsonl'),JSON.stringify({id:args[args.indexOf('--message-id')+1],profile,...(args.includes('--reply-in-thread')?{thread:true}:{}),format:'card',card,text:card.body.elements.filter(e=>e.tag==='markdown').map(e=>e.content).join('\\n')})+'\\n');
   return console.log(JSON.stringify({ok:true,data:{}}));
  }
  if(args.includes('+messages-reply')){const flag=args.includes('--markdown')?'--markdown':'--text';
-  fs.appendFileSync(path.join(root,'replies.jsonl'),JSON.stringify({id:args[args.indexOf('--message-id')+1],profile,format:flag.slice(2),text:args[args.indexOf(flag)+1]})+'\\n');}
+  fs.appendFileSync(path.join(root,'replies.jsonl'),JSON.stringify({id:args[args.indexOf('--message-id')+1],profile,...(args.includes('--reply-in-thread')?{thread:true}:{}),format:flag.slice(2),text:args[args.indexOf(flag)+1]})+'\\n');}
  if(args.includes('+upload')&&args.includes('drive')){
   // Like lark-cli: cwd-relative file outside /root; the app may lack the Drive scopes.
   const name=args[args.indexOf('--file')+1];

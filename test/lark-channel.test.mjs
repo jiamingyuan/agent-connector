@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { eventDecision, messageText, replyArgs, allowedUsers } from '../lark-channel/protocol.mjs';
+import { eventDecision, messageText, replyArgs, cardReplyArgs, fileReplyArgs, allowedUsers } from '../lark-channel/protocol.mjs';
+import { normalize } from '../lark-channel/index.mjs';
 
 const now = Date.now();
 const config = { ownerOpenId: 'ou_owner', maxEventAgeMs: 300_000, workspace: '/tmp/workspace' };
@@ -54,4 +55,18 @@ test('several users can be allowed; each is checked exactly and malformed IDs ar
   assert.deepEqual(allowedUsers({ ownerOpenId: 'ou_owner', ownerOpenIds: ['ou_owner', 'ou_bob'] }), ['ou_owner', 'ou_bob']);
   assert.equal(eventDecision({ ...event, sender_id: 'ou_owner' }, { ...config, ownerOpenIds: undefined }, now), null);
   assert.equal(eventDecision(event, { ...config, ownerOpenId: undefined }, now), 'sender');
+});
+
+test('a message in a thread names the message the thread hangs on; a quoted reply outside a thread does not', () => {
+  assert.equal(normalize({ ...event, content: 'x', message_type: 'text', thread_id: 'omt_1', root_id: 'om_root' }, config).thread, 'om_root');
+  assert.equal(normalize({ ...event, content: 'x', message_type: 'text', root_id: 'om_root' }, config).thread, undefined);
+  assert.equal(normalize({ ...event, content: 'x', message_type: 'text' }, config).thread, undefined);
+});
+
+test('a reply that opens a thread is sent with --reply-in-thread, in every form', () => {
+  const entry = { messageId: 'om_test', key: 'k', text: 'hi', format: 'text' };
+  for (const args of [replyArgs({ ...entry, inThread: true }), cardReplyArgs({ ...entry, inThread: true }, {}), fileReplyArgs({ ...entry, inThread: true }, 'a.txt')]) {
+    assert(args.includes('--reply-in-thread'), args.join(' '));
+  }
+  assert(!replyArgs(entry).includes('--reply-in-thread'));
 });
