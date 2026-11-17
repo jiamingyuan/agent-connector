@@ -40,7 +40,7 @@
    以下取舍由 Agent 自行决定，未经用户确认：没有做命令行入口，只有聊天里的 `/test`（渠道测试需要一条真实消息来回复）；高风险的权限模式不测；会留下东西或代价高的项（飞书 `drive`）不进 `all`，只在点名时运行；升级后已有的 Agent 和机器人也会各被问一次；富文本和卡片只确认发送成功，显示效果靠用户自己看。
 
 5. 项目规则与“功能与模块”表（2026-11-12）。用户原话（飞书）：“做一个项目级的规则吧，每次新增一个功能，同时开发所有存量模块，并测试；在readme里加个功能模块（已有则改造）通过表格形式展示功能和模块测试情况，测试过了就写已完成，开发完就写已开发，未开发的就写未开发；先把当前运行的agent和channel都完成开发和测试”。
-   - 规则写进 [rules.md](../rules.md) 第 1 条。README 新增“功能与模块”一节，Agent 一张表（Claude Code、Codex）、渠道一张表（飞书），每格是已完成、已开发或未开发，并标出对应的 `/test` 项目名。
+   - 规则写进 [rules.md](https://github.com/jiamingyuan/agent-connector/blob/2cc3d0d/pjkp/rules.md) 第 1 条。README 新增“功能与模块”一节，Agent 一张表（Claude Code、Codex）、渠道一张表（飞书），每格是已完成、已开发或未开发，并标出对应的 `/test` 项目名。
    - 为了让“超时停止”也能测，接入测试加了 `timeout` 一项。
    - 当前在用的 Claude Code 和飞书已在真实环境测过，结果见下面“验证”。
 
@@ -66,7 +66,7 @@
    以下取舍由 Agent 自行决定，未经用户确认：`/temp` 也支持带目录（用户只提了 `/new`）。
 
 9. 仓库根目录的 `CLAUDE.md`（2026-11-12）。用户先问项目规则放进 `CLAUDE.md` 是否能确保会话里有这条信息，随后要求（飞书）：“在当前工作区下，建一个claude.md，把刚提的规则放进去”。
-   - 内容是规则第 1 条，文字与 [rules.md](../rules.md) 一致，来源和原话仍只记在 rules.md；规则改动时两处一起改。
+   - 内容是规则第 1 条，文字与 [rules.md](https://github.com/jiamingyuan/agent-connector/blob/2cc3d0d/pjkp/rules.md) 一致，来源和原话仍只记在 rules.md；规则改动时两处一起改。（2026-11-17 已取代：用户“对 acomet、agent-connector、focus 进行迁移吧”，rules.md 已删除，来源与原话移入 [CLAUDE.md](../../CLAUDE.md)，规则只改这一处；用户随后要求“gitignore一下claude.md吧”，CLAUDE.md 不进 Git。）
    - 作用：工作目录是本仓库的 Claude Code 会话启动时自动带上这条规则。Codex 读的是 `AGENTS.md`，没有建。
 
 10. 切换模型后卡片立即显示新模型（2026-11-14）。用户在飞书用 `/model claude-fable-5-2` 切换后，确认卡片上仍显示上一轮的 `claude opus 5.5`，问“为啥这里切换完之后显示的还是opus”；解释原因并提出改法后，用户：“改吧”。
