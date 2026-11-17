@@ -5,10 +5,10 @@
 // real Codex.
 import fs from 'node:fs';
 import path from 'node:path';
-import { runCliTurn } from '../core/cli-turn.mjs';
+import { runCliTurn, runCliEvents } from '../core/cli-turn.mjs';
 import { needsSession } from '../core/selftest.mjs';
 import { filterSessions, pickSession, timeAgo, formatSessionList } from '../core/session-list.mjs';
-import { sandboxModes, sandboxMode, findSandboxMode, effortLevels, findModel, findEffort, codexArgs, recapArgs, recapPrompt, parseEvent } from './cli.mjs';
+import { sandboxModes, sandboxMode, findSandboxMode, effortLevels, findModel, findEffort, codexArgs, recapArgs, recapPrompt, parseEvent, modelCheckArgs, modelVerdict } from './cli.mjs';
 import { codexHome, listSessions, sessionStats, sessionDigest, promptName, recordFile, turnStats, usageText, trashSession } from './sessions.mjs';
 
 export { codexArgs, parseEvent, effortLevels };
@@ -64,7 +64,10 @@ export function createAgent(config, { env, runtime }) {
       hint: '可简写为 readonly、write、auto、full',
     },
     // Unset defaults mean Codex's own configuration, which the bridge does not know.
-    models: { descriptions: {}, resolve: override => override || config.codexModel, find: findModel, hint: '写 Codex 支持的模型名' },
+    models: { descriptions: {}, resolve: override => override || config.codexModel, find: findModel, hint: '写 Codex 支持的模型名',
+      // Every name is tried once before the switch (Codex has no aliases here).
+      check: (model, { timeoutMs } = {}) => runCliEvents({ bin: config.codexBin, args: modelCheckArgs(config, model), input: 'Reply with OK only.',
+        cwd: config.workspace, env, timeoutMs }).then(modelVerdict) },
     efforts: { descriptions: effortLevels, resolve: override => override || config.codexEffort, find: findEffort },
     // Connection test (/test): the effort to try the switch with (no model: names change too often),
     // and what only this agent knows how to check.

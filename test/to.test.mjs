@@ -23,7 +23,7 @@ const inThread = (root, content) => ({ ...privateEvent, content, thread_id: `omt
 
 test('/to says the text to another session and answers in a thread; the thread keeps that session, the chat keeps its own', { timeout: 30_000 }, async t => {
   let project;
-  const { root, replies, calls, state } = await runBridge(t, async root => {
+  const { root, replies, calls, state, reactions } = await runBridge(t, async root => {
     const made = await fixture(root);
     project = made.project;
     return {
@@ -60,6 +60,8 @@ test('/to says the text to another session and answers in a thread; the thread k
   assert.equal(state.sessions.oc_private.id, 'chat-session');
   assert.deepEqual([state.sessions['oc_private#om_step_1'].id, state.sessions['oc_private#om_step_1'].thread], [alpha, true]);
   assert.deepEqual(state.modes, { oc_private: 'plan' });
+  const emoji = id => reactions.find(item => item.id === id)?.emoji;
+  assert.deepEqual([emoji('om_step_1'), emoji('om_step_2'), emoji('om_step_3')], ['Loudspeaker', 'SaluteFace', 'SaluteFace'], '/to gets a loudspeaker; its thread and the chat keep the salute');
 });
 
 test('/to is for private chats only', { timeout: 20_000 }, async t => {

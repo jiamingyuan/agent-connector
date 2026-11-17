@@ -22,7 +22,7 @@
 | `/temp [目录]` | 开一个临时会话：用法和 `/new` 一样（也可以带目录），但离开它时（`/new`、`/temp`、`/switch`）会自动删除，会话记录移到 `runtime/trash/`。回复首行显示“临时会话” | 排队 | Claude Code、Codex |
 | `/keep` | 把当前的临时会话保留为常规会话：之后离开不再删除，并像新会话一样自动起名 | 排队 | 全部 |
 | `/mode [模式名]` | 不带参数时查看当前权限模式和全部选项，带参数时切换（见[权限模式](#权限模式)） | 排队 | Claude Code、Codex |
-| `/model [名称]` | 不带参数时查看这个聊天使用的模型和可选项，带参数时切换；`/model default` 恢复默认。Claude Code 可写别名（`fable`、`opus`、`sonnet`、`haiku`）或完整模型名。从下一条消息开始生效，只影响这个聊天，重启后保留 | 排队 | Claude Code、Codex |
+| `/model [名称]` | 不带参数时查看这个聊天使用的模型和可选项，带参数时切换；`/model default` 恢复默认。Claude Code 可写别名（`fable`、`opus`、`sonnet`、`haiku`）或完整模型名。写完整模型名时先试一次（一次很小的模型调用，几秒），模型不存在或账号不能用就回复“不存在”并保持原来的模型；别名不试。从下一条消息开始生效，只影响这个聊天，重启后保留 | 排队 | Claude Code、Codex |
 | `/effort [级别]` | 查看或切换推理深度（Claude Code：`low`、`medium`、`high`、`xhigh`、`max`）；`/effort default` 恢复默认。生效范围同 `/model` | 排队 | Claude Code、Codex |
 | `/rename [名称]` | 重命名当前会话；不写名称时根据对话内容自动生成。改名后，回复首行的会话名、`/sessions` 列表和终端的会话列表都会用新名字。调用 Claude Code 自带的 `/rename` | 排队 | Claude Code、Codex |
 | `/compact [要点]` | 压缩当前会话的上下文，回复压缩前后的 token 数；会话 ID 不变，之后的消息基于压缩后的摘要继续。可附上摘要里要保留的重点，如 `/compact 保留 newdash 的设计决定`。调用 Claude Code 自带的 `/compact` | 排队 | Claude Code |
@@ -174,6 +174,7 @@ Claude Code 默认使用 `auto` 模式。`config.json` 的 `claudePermissionMode
 | 保存要发回的文件 | 已完成 | 已开发 | `outbox` |
 | 权限模式 `/mode` | 已完成（高风险的 `bypassPermissions` 不测） | 已开发 | `modes` |
 | 切换模型 `/model` | 已完成 | 已开发 | `model` |
+| `/model` 写了不存在的模型时提示“不存在”，不切换 | 已完成（用真实的 Claude Code 走过：写错的名字被拦下并带上原因，正确的名字照常切换） | 已开发 | `model-check` |
 | 推理深度 `/effort` | 已完成 | 已开发 | `effort` |
 | 卡片上的模型、上下文、额度、本轮用量 | 已完成 | 已开发 | `stats` |
 | `/rename` 改名、新会话自动起名 | 已完成 | 已开发 | `rename` |
@@ -328,7 +329,7 @@ Codex 模块按 Codex 0.167.2 的源码（`codex exec` 的参数、事件和会�
 | --- | --- |
 | 会话目录 | 新会话默认在 `workspace` 里运行；配置了 `sessionDir` 则用它。会话目录同时是沙箱允许写入的范围，所以默认不放在主目录。切换到别的会话时在那个会话自己的目录里运行。 |
 | 权限模式（`/mode`，默认值 `codexMode`） | `read-only`、`workspace-write`（默认）、`auto-review`（超出范围的操作交给 Codex 的自动审查）、`danger-full-access`（不设沙箱，只能在私聊切换）。没有人能回答确认，所以除 `auto-review` 外需要确认的操作都直接拒绝。 |
-| 模型与推理深度 | `/model` 接受任意模型名，默认值 `codexModel`；`/effort` 为 `minimal`、`low`、`medium`、`high`、`xhigh`，默认值 `codexEffort`。 |
+| 模型与推理深度 | `/model` 接受任意模型名，切换前先用这个模型试跑一次（不保存、只读），Codex 报告模型不存在时不切换；默认值 `codexModel`；`/effort` 为 `minimal`、`low`、`medium`、`high`、`xhigh`，默认值 `codexEffort`。 |
 | 图片和文件 | 图片用 `-i` 传入；收到的文件和发件目录不在会话目录里时用 `--add-dir` 放开。 |
 | 工作区说明 | 会话在 `workspace` 里时 Codex 自己读 `workspace/AGENTS.md`；在别的目录时，桥接程序把这个文件的内容作为附加指令传入。 |
 | `/usage` | Codex 只在回答时报告额度，这里显示最近一次回答时的数据，不调用模型。 |

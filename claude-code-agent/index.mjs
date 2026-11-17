@@ -2,10 +2,10 @@
 // optional features modes (/mode), models (/model), efforts (/effort), usage (/usage), compact (/compact), rename (/rename) and sessions
 // (/sessions, /switch, /delete).
 import path from 'node:path';
-import { runCliTurn, runCliQuery } from '../core/cli-turn.mjs';
+import { runCliTurn, runCliQuery, runCliEvents } from '../core/cli-turn.mjs';
 import { needsSession } from '../core/selftest.mjs';
 import { permissionModes, permissionMode, findPermissionMode, modelAliases, findModel, effortLevels, findEffort, turnArgs, recapArgs, usageArgs, recapPrompt, turnInput,
-  parseEvent, compactArgs, compactInput, parseCompactEvent, renameArgs, renameInput, parseRenameEvent } from './cli.mjs';
+  parseEvent, compactArgs, compactInput, parseCompactEvent, renameArgs, renameInput, parseRenameEvent, modelCheckArgs, modelVerdict } from './cli.mjs';
 import { claudeHome, listSessions, filterSessions, pickSession, runningSessions, sessionDigest, formatSessionList,
   timeAgo, trashSession, sessionStats } from './sessions.mjs';
 
@@ -41,6 +41,9 @@ export function createAgent(config, { env: baseEnv }) {
       resolve: override => override || config.claudeModel,
       find: findModel,
       hint: '也可写完整模型名，如 claude-sonnet-5-5',
+      // A full model name is tried once before the switch; the aliases always exist.
+      check: (model, { timeoutMs } = {}) => runCliEvents({ bin: config.claudeBin, args: modelCheckArgs(model), input: 'Reply with OK only.',
+        cwd: config.workspace, env, timeoutMs }).then(modelVerdict),
     },
     efforts: {
       descriptions: effortLevels,

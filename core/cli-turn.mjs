@@ -78,3 +78,22 @@ export function runCliQuery({ bin, args, input, cwd, env, parse, timeoutMs = 60_
     });
   });
 }
+
+// A short run of a program that prints JSON lines, for checks whose outcome each agent reads itself
+// (such as whether a model exists). Resolves with the exit code and the parsed lines, at most
+// `limit` of them; rejects only when the program cannot be started.
+export function runCliEvents({ bin, args, input, cwd, env, timeoutMs = 60_000, limit = 200 }) {
+  return new Promise((resolve, reject) => {
+    const child = start(bin, args, { cwd, env, stdio: ['pipe', 'pipe', 'ignore'] });
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; stop(child); }, timeoutMs);
+    const events = [];
+    createInterface({ input: child.stdout }).on('line', line => {
+      if (events.length < limit) { try { events.push(JSON.parse(line)); } catch { /* diagnostics */ } }
+    });
+    child.stdin.on('error', () => {});
+    child.stdin.end(input);
+    child.on('error', error => { clearTimeout(timer); reject(error); });
+    child.on('close', code => { clearTimeout(timer); resolve({ code, events, timedOut }); });
+  });
+}

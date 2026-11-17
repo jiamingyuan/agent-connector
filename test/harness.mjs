@@ -63,6 +63,7 @@ if(args.includes('consume')){
  },25);
  process.stdin.resume();process.stdin.on('end',()=>process.exit(0));
 }else{
+ if(args.includes('reactions')&&args.includes('create')){fs.appendFileSync(path.join(root,'reactions.jsonl'),JSON.stringify({id:JSON.parse(args[args.indexOf('--params')+1]).message_id,emoji:JSON.parse(args[args.indexOf('--data')+1]).reaction_type.emoji_type})+'\\n');}
  if(args.includes('+messages-reply')&&args.includes('--file')){
   // Like lark-cli: the file must be cwd-relative and outside /root.
   const name=args[args.indexOf('--file')+1];
@@ -109,6 +110,7 @@ const {failSummary}=JSON.parse(fs.readFileSync(path.join(root,'fake.json'),'utf8
 process.stdin.on('data',x=>input+=x);process.stdin.on('end',()=>{
  const index=args.indexOf('--resume'),resumed=index<0?null:args[index+1],summary=args.includes('--fork-session');
  const mode=args.includes('--permission-mode')?args[args.indexOf('--permission-mode')+1]:null;
+ if(args.includes('--system-prompt')&&input==='Reply with OK only.'){const model=args[args.indexOf('--model')+1];fs.appendFileSync(path.join(root,'checks.jsonl'),JSON.stringify({model,args})+'\\n');if(/no-such|\\./.test(model)){const t="There's an issue with the selected model ("+model+"). It may not exist or you may not have access to it.";console.log(JSON.stringify({type:'assistant',error:'model_not_found',api_error_status:404,message:{model:'<synthetic>',content:[{type:'text',text:t}]}}));console.log(JSON.stringify({type:'result',subtype:'success',is_error:true,api_error_status:404,result:t}));process.exit(1);}console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,result:'OK'}));return;}
  if(!args.includes('--permission-mode')&&!summary&&input==='/usage'){fs.appendFileSync(path.join(root,'usage.jsonl'),JSON.stringify({args,cwd:process.cwd()})+'\\n');console.log(JSON.stringify({type:'result',subtype:'success',session_id:'u',result:'Current session: 14% used'}));return;}
  if(input.startsWith('/rename')){
   // Like Claude Code: '/rename <name>' sets it, a bare '/rename' generates one.
@@ -179,5 +181,5 @@ process.stdin.on('data',x=>input+=x);process.stdin.on('end',()=>{
     const match = /^(\*\*[^\n]*\*\*(?: -- [^\n]*)?|【[^\n]*】(?: -- [^\n]*)?)\n([\s\S]*)$/.exec(reply.text);
     return match ? { ...reply, head: match[1], text: match[2], raw: reply.text } : { ...reply, head: null, raw: reply.text };
   });
-  return { root, replies, calls: await readLines('calls.jsonl'), drive: await readLines('drive.jsonl'), state: JSON.parse(await fs.readFile(path.join(root, 'runtime/state.json'), 'utf8')) };
+  return { root, replies, calls: await readLines('calls.jsonl'), drive: await readLines('drive.jsonl'), reactions: await readLines('reactions.jsonl'), checks: await readLines('checks.jsonl'), state: JSON.parse(await fs.readFile(path.join(root, 'runtime/state.json'), 'utf8')) };
 }

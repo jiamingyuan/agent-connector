@@ -110,3 +110,17 @@ test('after /model the card shows the chosen model until the next answer reports
   assert.equal(model(replies[4]), 'haiku');
   assert.equal(model(replies[5]), undefined);
 });
+
+test('/model with a model that does not exist says so and keeps the current model; an existing one is tried once and switched to', { timeout: 20_000 }, async t => {
+  const { replies, calls, checks, state } = await runBridge(t, async () => ({
+    events: ['/model claude-opus-5.5', '你好', '/model claude-haiku-5-5', '再来', '/model opus'].map(content => ({ ...privateEvent, content })),
+  }));
+  assert(replies[0].text.startsWith('模型「claude-opus-5.5」不存在，或当前账号不能使用，没有切换（Claude Code：There\'s an issue with the selected model'), replies[0].text);
+  assert(replies[0].text.includes('当前模型：Claude Code 默认（默认）'), replies[0].text);
+  assert.match(replies[2].text, /^已将模型切换为 claude-haiku-5-5。从下一条消息开始生效，\/model default 可恢复默认。$/);
+  assert.match(replies[4].text, /^已将模型切换为 opus：/);
+  assert.deepEqual(checks.map(check => check.model), ['claude-opus-5.5', 'claude-haiku-5-5'], 'aliases are not tried');
+  const turns = calls.filter(call => !call.input.startsWith('/rename'));
+  assert.deepEqual(turns.map(call => flag(call, '--model')), [null, 'claude-haiku-5-5']);
+  assert.deepEqual(state.models, { oc_private: 'opus' });
+});

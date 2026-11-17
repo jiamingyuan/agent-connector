@@ -12,6 +12,18 @@
 
    以下取舍由 Agent 自行决定，未经用户确认：会话名里有空格时按能匹配上的最长会话名切分；话题里改 `/mode` 等改的是整个聊天的设置（由“沿用所在聊天的设置”推出）；话题里拒绝的指令范围；话题记录不会自动清理。
 
+2. `/to` 的处理中表情改为喇叭（2026-11-16）。用户原话（飞书，附表情面板截图，选中 Loudspeaker）：“将 /to 的reaction 表情也改一下吧，改成上面这个，thread里面还是用原本的”。
+   - 渠道接口 `acknowledge(message, { strict, purpose })` 多一个可选的 `purpose`，中枢对 `/to` 那条消息传 `'to'`；飞书据此用 `Loudspeaker`（真实飞书里实测这个名字可用，`LOUDSPEAKER`、`Speaker` 不可用），话题里的消息和其他消息仍是 `SaluteFace`。
+   - 验证：`test/to.test.mjs` 加了表情断言（测试用的假飞书工具开始记录表情）；`npm test` 106 条里 105 条通过，1 条只在 Windows 上跑。2026-11-16 21:27（日本时间）随服务重启上线（当时尚未提交），2026-11-17 推送。
+
+3. `/model` 写了不存在的模型时提示“不存在”（2026-11-17）。起因：用户在 Sophia 私聊发了 `/model claude-opus-5.5`（正确写法是 `claude-opus-5-5`），桥接只查格式就接受了，下一条消息才被 Claude Code 拒绝。用户原话（飞书）：“如果输入错误的模型，就显示一下模型不存在”。
+   - 做法：Agent 接口 `models` 新增可选的 `check(name)`。`/model` 选的名字不是别名时，中枢先调用它：明确不存在就回复“不存在，或当前账号不能使用，没有切换”并附上 Agent 给的原因；判断不了（网络、额度、超时）就照常切换并提醒。别名不检查。
+   - Claude Code：用这个模型跑一次最小的调用（不保存会话、不带工具和设置、一行系统提示）。实测（2.1.323）：不存在的模型返回 `model_not_found`（HTTP 404），不消耗用量，约 3 秒；存在的模型约 4 秒，约 950 个输入 token、4 个输出 token。Codex：一次不保存、只读的 `codex exec`，从错误信息里认出模型不存在（按 API 的报错格式写的，没有真实 Codex 验证）。
+   - 接入测试新增 Agent 项 `model-check`；新增共用的 `runCliEvents`（`core/cli-turn.mjs`）。
+
+   以下取舍由 Agent 自行决定，未经用户确认：用一次真实的模型调用来判断（没有不花用量的查询办法）；判断不了时照常切换而不是拒绝；提示里写“不存在，或当前账号不能使用”（Claude Code 对两者给的是同一个错误）。
+   - 验证：`npm test` 109 条里 108 条通过，1 条只在 Windows 上跑（新增：`/model` 端到端 1 条、两个 Agent 的判断各 1 条）；真实的 Claude Code：模块判断 `claude-opus-5.5` 不存在、`claude-haiku-5-5` 可用，接入测试项 `model-check` 通过，经真实中枢走 `/model claude-opus-5.5`（被拦下）、`/model claude-haiku-5-5`（切换）、`/model default`。2026-11-17 推送。
+
 ## 验证
 
 - `npm test` 106 条里 105 条通过，1 条只在 Windows 上跑。新增：`test/to.test.mjs` 2 条（Claude Code 端到端：开话题、话题里续接、主聊天不变、话题里拒绝 `/new`、设置跟随聊天、找不到会话、缺正文、非 `/to` 话题照常、群聊拒绝）；`test/to-codex.test.mjs` 1 条（真实的 Codex 模块 + 假 `codex` 程序与会话记录）；飞书 2 条（`thread` 字段、三种回复带 `--reply-in-thread`）。
@@ -21,4 +33,4 @@
 
 ## 当前状态
 
-2026-11-16 推送到 `main`，标签 `V1.6` 打在 `72790b0`，并在本机上线（服务空闲后自动重启）。上线后待做：用户在真实飞书里发 `/to`、在话题里回复，或跑 `/test thread thread-receive`。
+2026-11-16 推送到 `main`，标签 `V1.6` 打在 `72790b0`，2026-11-16 21:27（日本时间）在本机上线。第 2、3 项 2026-11-17 推送（HASH_PENDING），按用户要求继续记在 V1.6（“push加上线吧”），标签没有移动（Agent 自行决定，未经用户确认）；服务空闲后自动重启上线。上线后待做：用户在真实飞书里发 `/to`、在话题里回复，或跑 `/test thread thread-receive`。

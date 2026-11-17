@@ -12,6 +12,7 @@ const LIST_LIMIT = 10;
 const SUMMARY_TIMEOUT_MS = 5 * 60_000;
 const COMPACT_TIMEOUT_MS = 10 * 60_000;
 const RENAME_TIMEOUT_MS = 2 * 60_000;
+const MODEL_CHECK_TIMEOUT_MS = 45_000;
 const PENDING_FILES_LIMIT = 10;
 const OUTGOING_FILES_LIMIT = 5;
 const RECALL_CHECK_MS = 5000;
@@ -871,7 +872,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
       ...listed, ...extra, ...(listed.length || extra.length ? [''] : []),
       `发送 ${command} 名称 切换${allowed === 'all' && part.hint ? `（${part.hint}）` : ''}，${command} default 恢复默认。只影响这个聊天的后续消息，重启后保留。`].join('\n');
   }
-  function changeChoice(message, kind, query) {
+  async function changeChoice(message, kind, query) {
     const { part, store, label, command } = choices[kind];
     if (!part) return reply(message, `${label}切换目前不支持 ${agentName}。`, kind);
     if (!query) return reply(message, choiceOverview(kind, message), kind);
@@ -882,6 +883,19 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     if (!reset && !value) return reply(message, `没有「${safeLabel(query)}」这个${label}。\n\n${choiceOverview(kind, message)}`, kind);
     if (!reset && allowed !== 'all' && !allowed.includes(value)) return reply(message, `机器人 ${bot.name} 不能使用${label} ${value}（可用：${allowed.join('、')}）。`, kind);
     if (value === current) return reply(message, `当前${label}已经是 ${choiceName(value)}。`, kind);
+    // A model name that is not one of the agent's aliases may not exist: the agent tries it once
+    // (a tiny model call) before the switch. Only a clear "does not exist" stops the switch.
+    let unsure = '';
+    if (kind === 'model' && !reset && part.check && !Object.hasOwn(part.descriptions, value)) {
+      await bot.channel.acknowledge(message);
+      let verdict;
+      try { verdict = await part.check(value, { timeoutMs: MODEL_CHECK_TIMEOUT_MS }); } catch (error) { verdict = { ok: null, reason: error.message }; }
+      log('model_checked', { chatId: message.chat, messageId: message.id, ok: verdict?.ok ?? null });
+      if (verdict?.ok === false) {
+        return reply(message, `模型「${safeLabel(value)}」不存在，或当前账号不能使用，没有切换${verdict.reason ? `（${agentName}：${verdict.reason}）` : ''}。\n\n${choiceOverview(kind, message)}`, kind);
+      }
+      if (verdict?.ok !== true) unsure = `\n没能确认这个模型是否可用${verdict?.reason ? `（${verdict.reason}）` : ''}，已先切换；如果下一条消息报模型错误，再换一个。`;
+    }
     if (value === fallback) delete store[settingsChat(message)]; else store[settingsChat(message)] = value;
     // Until the next answer reports the model it really ran on, the header shows the one just chosen
     // (none when the choice is the agent's own default), not the one the session last ran on.
@@ -892,7 +906,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     }
     save();
     log(`${kind}_changed`, { chatId: message.chat, messageId: message.id, [kind]: value || 'default' });
-    return reply(message, `已将${label}切换为 ${choiceName(value)}${value === fallback ? '（默认）' : ''}${part.descriptions[value] ? `：${part.descriptions[value]}` : ''}。从下一条消息开始生效${value === fallback ? '' : `，${command} default 可恢复默认`}。`, kind);
+    return reply(message, `已将${label}切换为 ${choiceName(value)}${value === fallback ? '（默认）' : ''}${part.descriptions[value] ? `：${part.descriptions[value]}` : ''}。从下一条消息开始生效${value === fallback ? '' : `，${command} default 可恢复默认`}。${unsure}`, kind);
   }
   const choiceLabel = (kind, message) => `${choiceName(choice(kind, message))}${choice(kind, message) === choice(kind, message, false) ? '（默认）' : `（${choices[kind].command} 切换）`}`;
 
@@ -1136,7 +1150,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     const problem = target.id && sessionProblem(target, message);
     if (problem) return reply(message, problem, 'blocked');
     try {
-      await channel.acknowledge(message);
+      await channel.acknowledge(message, message.startThread ? { purpose: 'to' } : undefined);
       if (superseded(message, generation)) return;
       const images = agent.capabilities.images && ['image', 'rich'].includes(message.kind) ? await channel.attachments(message) : [];
       if (superseded(message, generation)) return;

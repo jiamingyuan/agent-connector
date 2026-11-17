@@ -125,6 +125,7 @@ runTurn: ({ sessionId, cwd, text, timeoutMs, onSession }) => runCliTurn({
 | `resolve(override?)` | 返回生效的值：有 `override` 用它，否则用配置的默认值；没有配置默认值时返回 `undefined`（显示为“<displayName> 默认”）。 |
 | `find(name)` | 把用户输入解析为可用的值，不接受时返回 `null`。 |
 | `hint` | 可选，附在“发送 /model 名称 切换”后的简短说明。 |
+| `check(name, { timeoutMs })` | 可选，仅 `models`：`/model` 选了一个不在 `descriptions` 里的名字时，切换前调用一次，判断这个模型是否存在。返回 Promise，resolve 为 `{ ok: true }`（可用）、`{ ok: false, reason }`（不存在或账号不能用，中枢回复“不存在”并不切换）或 `{ ok: null, reason }`（判断不了，例如网络或额度问题，中枢照常切换并提醒）。别名一定存在，不会被检查。 |
 
 提供 `efforts` 后，卡片上的推理深度取这个聊天当前生效的值，不再需要 `onStats` 报告 `effort`。
 
@@ -241,7 +242,7 @@ export function createChannel(config, context) {
 
 ### 其他方法
 
-- `acknowledge(message, { strict })`：表示“已开始处理”，例如加表情或已读回执；返回 Promise 且**不得拒绝**（失败自己记日志），只有 `strict` 为 true 时（接入测试）才把失败抛出来。没有对应能力就返回 `Promise.resolve()`。
+- `acknowledge(message, { strict, purpose })`：`purpose` 可选，为 `'to'` 时这条消息是交给另一个会话的 `/to`，渠道可以用不同的表示（飞书用喇叭表情，其余用敬礼表情）；表示“已开始处理”，例如加表情或已读回执；返回 Promise 且**不得拒绝**（失败自己记日志），只有 `strict` 为 true 时（接入测试）才把失败抛出来。没有对应能力就返回 `Promise.resolve()`。
 - `attachments(message)`：仅当 Agent 支持图片且 `kind` 为 `'image'` 或 `'rich'` 时调用，返回 `[{ path, mediaType, data }]`（没有图返回 `[]`）。文件建议存在 `config.workspace` 下的私有目录（平台工具不允许写入该目录时，先下载到 `os.tmpdir()` 下用 `mkdtemp` 建的私有目录，检查后再复制，参考 `lark-channel/images.mjs`）；遇到不支持的格式或超限时抛出带用户可读 `message` 的错误，中枢会原样回复。
 - `files(message)`：仅当 Agent 的 `capabilities.files` 为 true 且 `kind` 为 `'file'` 时调用，返回 `[{ path, name, size }]`：本地路径、处理过的安全文件名（单个路径分量）、字节数。下载方式与 `attachments` 相同（参考 `lark-channel/files.mjs`），超限、文件夹等情况抛出带用户可读 `message` 的错误。中枢收到后先回复“已收到文件”，把文件留到这个聊天的下一条普通消息再交给 Agent（文件和文字在飞书里是分开的两条消息）；那一轮成功后才清除，失败或被 `/stop` 时保留。
 

@@ -157,6 +157,14 @@ export function agentChecks(agent) {
       await context.ask('接入测试：请只回复 OK。', { model: hints.model });
       return `${hints.model}${context.stats.model ? `（实际 ${context.stats.model}）` : ''}`;
     } },
+    { id: 'model-check', title: '识别不存在的模型（/model）', when: () => (!agent.models ? unsupported(agent, '模型切换') : agent.models.check ? undefined : unsupported(agent, '模型检查')), async run() {
+      const missing = await agent.models.check('claude-no-such-model-0', { timeoutMs: 60_000 });
+      if (missing.ok !== false) throw new Error(missing.ok ? '把不存在的模型当成了可用' : `没能判断（${short(missing.reason || '没有原因')}）`);
+      if (!hints.model) return '不存在的模型被拦下；没有指定测试用的模型，没测可用的一侧';
+      const real = await agent.models.check(hints.model, { timeoutMs: 60_000 });
+      if (real.ok !== true) throw new Error(`把可用的 ${hints.model} 判成了${real.ok === false ? '不存在' : `无法判断（${short(real.reason || '没有原因')}）`}`);
+      return `不存在的模型被拦下，${hints.model} 判为可用`;
+    } },
     { id: 'effort', title: '切换推理深度', when: context => (agent.efforts ? needsSession(context) : unsupported(agent, '推理深度切换')), async run(context) {
       const effort = hints.effort || Object.keys(agent.efforts.descriptions)[0];
       if (!effort) skip('这个 Agent 模块没有列出可选的推理深度');

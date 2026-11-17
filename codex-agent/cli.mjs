@@ -74,6 +74,12 @@ export function recapArgs(config, sessionId, outputFile, cwd) {
     '-C', cwd || config.workspace, '-o', outputFile, 'fork', sessionId, '-'];
 }
 
+// /model: one tiny run that is never saved and cannot change files tells whether the model exists.
+export function modelCheckArgs(config, model) {
+  return ['exec', '--json', '--skip-git-repo-check', '--ephemeral', '--sandbox', 'read-only', '-c', 'approval_policy="never"',
+    '-c', 'model_reasoning_effort="low"', '-m', model, '-C', config.workspace, '-'];
+}
+
 export const recapPrompt = `[桥接：前情梗概]
 用户刚在聊天里切换到这个会话，准备接着用。请只根据本会话已有的上下文，用简体中文写一份前情梗概：
 - 目标：这个会话在做什么
@@ -102,4 +108,14 @@ export function parseEvent(event, after) {
   if (event.type === 'turn.failed') return { failed: true, ...(event.error?.message ? { errorText: reason(event.error.message) } : {}) };
   if (event.type === 'error' && event.message) return { errorText: reason(event.message) };
   return {};
+}
+
+// What the /model check found, as for Claude Code: { ok: false } when Codex reports that the model
+// does not exist (the API's model_not_found, "The model `x` does not exist or you do not have access
+// to it"), { ok: true } when the turn completed, { ok: null } otherwise.
+export function modelVerdict({ code, events, timedOut }) {
+  const text = reason(events.map(event => (event.type === 'error' ? event.message : event.type === 'turn.failed' ? event.error?.message : '')).filter(Boolean).join(' '));
+  if (/model_not_found|model\b.*\b(does not exist|not found|not supported|unknown)|unknown model|unsupported model/i.test(text)) return { ok: false, reason: text.slice(0, 200) };
+  if (code === 0 && events.some(event => event.type === 'turn.completed')) return { ok: true };
+  return { ok: null, reason: timedOut ? '检查超时' : text.slice(0, 200) || `Codex 退出码 ${code}` };
 }

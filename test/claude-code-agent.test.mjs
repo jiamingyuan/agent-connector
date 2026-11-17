@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { turnArgs, recapArgs, usageArgs, recapPrompt, turnInput, parseEvent, permissionModes, permissionMode,
-  findPermissionMode, compactArgs, compactInput, parseCompactEvent, renameArgs, renameInput, parseRenameEvent } from '../claude-code-agent/cli.mjs';
+  findPermissionMode, compactArgs, compactInput, parseCompactEvent, renameArgs, renameInput, parseRenameEvent, modelCheckArgs, modelVerdict } from '../claude-code-agent/cli.mjs';
 
 const config = { agent: 'claude-code', claudeBin: '/bin/claude', workspace: '/workspace' };
 const modeOf = args => args[args.indexOf('--permission-mode') + 1];
@@ -143,4 +143,21 @@ test('the outbox is opened up with --add-dir when the session runs elsewhere', (
   assert.deepEqual(args.slice(args.indexOf('--add-dir'), args.indexOf('--add-dir') + 2), ['--add-dir', '/ws/outbox/k2']);
   assert.deepEqual(args.slice(-2), ['--resume', 's1']);
   assert(!turnArgs(config, 's1', { cwd: '/ws', outbox: '/ws/outbox/k2' }).includes('--add-dir'));
+});
+
+test('the /model check runs one bare call with the model, and reads Claude Code\'s answer', () => {
+  const args = modelCheckArgs('claude-opus-5.5');
+  assert.equal(args[args.indexOf('--model') + 1], 'claude-opus-5.5');
+  for (const flag of ['--no-session-persistence', '--strict-mcp-config', '--system-prompt']) assert(args.includes(flag), flag);
+  assert.equal(args[args.indexOf('--tools') + 1], '');
+  assert.equal(args[args.indexOf('--setting-sources') + 1], '');
+  // As printed by Claude Code 2.1.323 (2026-11-17) for a model that does not exist, and for one that answered.
+  const missing = "There's an issue with the selected model (claude-opus-5.5). It may not exist or you may not have access to it.";
+  assert.deepEqual(modelVerdict({ code: 1, events: [{ type: 'system', subtype: 'init', model: 'claude-opus-5.5' },
+    { type: 'assistant', error: 'model_not_found', api_error_status: 404, message: { model: '<synthetic>', content: [{ type: 'text', text: missing }] } },
+    { type: 'result', subtype: 'success', is_error: true, api_error_status: 404, result: missing }] }), { ok: false, reason: missing });
+  assert.deepEqual(modelVerdict({ code: 0, events: [{ type: 'assistant', message: { model: 'claude-haiku-5-5', content: [{ type: 'text', text: 'OK' }] } },
+    { type: 'result', subtype: 'success', is_error: false, result: 'OK' }] }), { ok: true });
+  assert.deepEqual(modelVerdict({ code: 1, events: [{ type: 'assistant', error: 'rate_limit', message: { content: [{ type: 'text', text: 'limit reached' }] } }] }), { ok: null, reason: 'limit reached' });
+  assert.deepEqual(modelVerdict({ code: null, events: [], timedOut: true }), { ok: null, reason: '检查超时' });
 });

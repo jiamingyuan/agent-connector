@@ -33,6 +33,10 @@ export function normalize(event, config) {
     ...(event.thread_id && /^om_[A-Za-z0-9_-]+$/.test(event.root_id || '') ? { thread: event.root_id } : {}), raw: event };
 }
 
+// The reaction that says a message is being handled: a loudspeaker for a message passed on to
+// another session (/to), a salute for everything else, the messages in a /to thread included.
+export const ackEmoji = purpose => (purpose === 'to' ? 'Loudspeaker' : 'SaluteFace');
+
 export function createChannel(config, { root, env, log }) {
   const larkArgs = ['--profile', config.profile];
   let listener, stopped = false, restartTimer, retries = 0;
@@ -143,10 +147,10 @@ export function createChannel(config, { root, env, log }) {
     // Up to 30 MB as a file reply (Feishu's limit, no empty files); larger ones as a Drive link.
     fileReplies: { maxBytes: CHAT_FILE_BYTES, linkMaxBytes: DRIVE_FILE_BYTES },
     // A failed reaction is only logged, unless `strict` asks for the error (the connection test does).
-    acknowledge: (message, { strict = false } = {}) => runLark(['im', 'reactions', 'create', '--as', 'bot',
+    acknowledge: (message, { strict = false, purpose } = {}) => runLark(['im', 'reactions', 'create', '--as', 'bot',
       '--params', JSON.stringify({ message_id: message.id }),
-      '--data', JSON.stringify({ reaction_type: { emoji_type: 'SaluteFace' } })], 10_000)
-      .then(() => log('ack_reaction_added', { messageId: message.id, emojiType: 'SaluteFace' }))
+      '--data', JSON.stringify({ reaction_type: { emoji_type: ackEmoji(purpose) } })], 10_000)
+      .then(() => log('ack_reaction_added', { messageId: message.id, emojiType: ackEmoji(purpose) }))
       .catch(error => { log('ack_reaction_failed', { messageId: message.id, type: error.detail?.subtype || error.name }); if (strict) throw error; }),
     // lark-cli has no event for withdrawn messages, so the hub asks while a message is in flight.
     // Only the flag is read (--jq), never the message text.

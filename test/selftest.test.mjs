@@ -54,7 +54,7 @@ async function setup(t, { broken = [], config = {}, agentExtras = {}, channelExt
       return job('OK');
     },
     modes: { descriptions: { normal: 'n', strict: 's', danger: 'd' }, resolve: override => override || 'normal', find: name => name, privateOnly: ['danger'] },
-    models: { descriptions: {}, resolve: override => override, find: name => name },
+    models: { descriptions: {}, resolve: override => override, find: name => name, check: async name => ({ ok: !name.includes('no-such') }) },
     efforts: { descriptions: { low: 'l', high: 'h' }, resolve: override => override, find: name => name },
     selfTest: { model: 'stub-small', stopAfterMs: 30, timeoutMs: 60, checks: [{ id: 'own', title: '模块自己的检查', run: context => `会话 ${context.session.id}` }] },
     usage: async () => '用量 10%', usageLabel: '用量',
@@ -135,7 +135,8 @@ test('/test lists the checks; /test all runs every agent and channel check and r
   await until(() => texts('test-channel').length === 1, 'the channel report', 1500);
 
   const agentReport = texts('test-agent')[0], channelReport = texts('test-channel')[0];
-  assert(agentReport.startsWith('**Agent：Stub**：通过 18 项，失败 0 项，跳过 0 项'), agentReport);
+  assert(agentReport.startsWith('**Agent：Stub**：通过 19 项，失败 0 项，跳过 0 项'), agentReport);
+  assert(agentReport.includes('✅ 识别不存在的模型（/model）：不存在的模型被拦下，stub-small 判为可用'), agentReport);
   for (const line of ['✅ 对话', '✅ 续接会话', '✅ 看图片', '✅ 读收到的文件', '✅ 保存要发回的文件', '✅ 权限模式：normal、strict；未测高风险的 danger',
     '✅ 切换模型：stub-small（实际 stub-small）', '✅ 切换推理深度：low', '✅ 回复卡片上的统计：已报告模型、上下文、本轮用量；未报告额度', '✅ /rename 改名', '✅ /sessions 会话列表',
     '✅ /switch 前情梗概', '✅ /compact 压缩上下文', '✅ /usage 用量', '✅ 模块自己的检查：会话 session-1', '✅ /stop 停止任务：0 秒内停下', '✅ 超时停止', '✅ /delete 删除会话：测试会话已移到回收目录']) assert(agentReport.includes(line), `${line}\n${agentReport}`);
@@ -154,7 +155,7 @@ test('/test lists the checks; /test all runs every agent and channel check and r
   // The channel got one entry of each kind it can send.
   const tests = sent.filter(entry => entry.kind === 'test-check');
   assert.deepEqual(tests.map(entry => entry.format || (entry.file ? 'file' : '')), ['text', 'markdown', 'card', 'file']);
-  assert.deepEqual({ ...state().selftest.agents.stub.last, at: 0 }, { at: 0, pass: 18, fail: 0, skip: 0 });
+  assert.deepEqual({ ...state().selftest.agents.stub.last, at: 0 }, { at: 0, pass: 19, fail: 0, skip: 0 });
   assert.equal(state().selftest.bots.default.last.pass, 9);
   // A message the test did not use is answered afterwards as a normal one; the one sent in place
   // of the image was the test's to deal with.

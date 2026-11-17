@@ -74,6 +74,13 @@ export function usageArgs() {
   return ['-p', '--output-format', 'stream-json', '--verbose', '--no-session-persistence', '--tools', '', '--strict-mcp-config'];
 }
 
+// /model with a full model name: one tiny model call with nothing loaded (no tools, settings, MCP
+// servers or saved session, and a one-line system prompt) tells whether the model exists.
+export function modelCheckArgs(model) {
+  return ['-p', '--output-format', 'stream-json', '--verbose', '--no-session-persistence', '--tools', '', '--strict-mcp-config',
+    '--setting-sources', '', '--system-prompt', 'Reply with OK only.', '--model', model, '--effort', 'low'];
+}
+
 export const recapPrompt = `[飞书桥接：前情梗概]
 用户刚在飞书里切换到这个会话，准备接着用。请只根据本会话已有的上下文，用简体中文写一份前情梗概：
 - 目标：这个会话在做什么
@@ -174,4 +181,15 @@ export function parseCompactEvent(event) {
   delete update.text;
   delete update.stats;
   return update;
+}
+
+// What the /model check found: { ok: true } when the model answered; { ok: false } when Claude Code
+// reports that it does not exist or the account cannot use it (an assistant error model_not_found,
+// HTTP 404, which costs nothing); { ok: null } when the run said neither (network, limits, timeout).
+export function modelVerdict({ code, events, timedOut }) {
+  const failure = events.find(event => event.type === 'assistant' && event.error) || events.find(event => event.type === 'result' && event.is_error);
+  const text = failure ? String((failure.type === 'result' ? failure.result : textOf(failure.message)) || failure.error || '').replace(/\s+/g, ' ').trim().slice(0, 200) : '';
+  if (failure && (failure.error === 'model_not_found' || failure.api_error_status === 404)) return { ok: false, reason: text };
+  if (code === 0 && events.some(event => event.type === 'result' && event.is_error === false)) return { ok: true };
+  return { ok: null, reason: timedOut ? '检查超时' : text || `Claude Code 退出码 ${code}` };
 }
