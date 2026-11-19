@@ -357,7 +357,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     if (!current?.temp) return mention && current?.name && sessions ? `已离开会话「${current.name}」，它仍在 /sessions 列表中。` : '';
     if (!current.id) return ''; // nothing was said in it, so nothing exists
     if (!sessions?.trash) return `已离开临时会话。${agentName} 不支持删除会话记录，它没有被删除。`;
-    if (Object.values(state.sessions).some(other => other?.id === current.id)) return '临时会话还有别的聊天在用，没有删除。';
+    if (Object.entries(state.sessions).some(([chat, other]) => other?.id === current.id && holds(chat, other))) return '临时会话还有别的聊天在用，没有删除。';
     if (sessions.running().has(current.id) && !sessionWork.has(current.id)) return '临时会话在终端里还开着，没有删除，它仍在 /sessions 列表中。';
     try {
       const session = sessions.list({ exclude: [] }).find(item => item.id === current.id);
@@ -557,15 +557,35 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
   // One bot per session: while a chat of one bot is in a session, another bot can neither enter nor
   // delete it and is told who has it; that chat lets go with /new or /switch. Chats of the same bot
   // are not kept apart, and chats of a bot that is no longer configured hold nothing.
+  // A /to thread holds its session only while it is in use: while one of its messages runs or waits,
+  // and for threadHoldMinutes (default 10) after its last message or answer. After that other bots
+  // may take the session; a later message in the thread takes it back if nobody else holds it, and
+  // carries on with the session's context like any other turn.
+  const threadHoldMs = () => (Number.isFinite(config.threadHoldMinutes) && config.threadHoldMinutes >= 0 ? config.threadHoldMinutes : 10) * 60_000;
+  const holds = (chat, record) => !record?.thread || active.has(chat) || queues.has(chat) || Date.now() < (record.openUntil || 0);
+  function touchThread(chat) {
+    const record = state.sessions[chat];
+    if (!record?.thread) return;
+    record.openUntil = Date.now() + threadHoldMs();
+    save();
+  }
+  // The other bot holding the session, if any: { name, thread }, a chat before a thread.
   function holderOf(sessionId, message) {
     if (!multi) return null;
+    let found = null;
     for (const [chat, current] of Object.entries(state.sessions)) {
-      if (current?.id !== sessionId) continue;
+      if (current?.id !== sessionId || !holds(chat, current)) continue;
       const bot = bots.get(chat.slice(0, chat.indexOf(':')));
-      if (bot && bot.id !== message.bot) return bot.name;
+      if (!bot || bot.id === message.bot) continue;
+      if (!current.thread) return { name: bot.name, thread: false };
+      found ||= { name: bot.name, thread: true };
     }
-    return null;
+    return found;
   }
+  const holdMinutes = () => `${Math.round(threadHoldMs() / 60_000 * 10) / 10} 分钟`;
+  const heldText = (holder, session, action) => (holder.thread
+    ? `会话「${session.name}」正在机器人 ${holder.name} 的一个 /to 话题里使用，${action}。那个话题空闲 ${holdMinutes()}后会释放，到时再试。`
+    : `会话「${session.name}」正由机器人 ${holder.name} 开着，${action}。在 ${holder.name} 那边发 /new 或 /switch 离开后再试。`);
   function showSessions(message, query) {
     const refusal = sessionCommandRefusal(message);
     if (refusal) return reply(message, refusal, 'sessions');
@@ -606,7 +626,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     if (problem) return reply(message, problem, 'switch');
     if (session.id === own) return reply(message, `当前已经在会话「${session.name}」中。`, 'switch');
     const holder = holderOf(session.id, message);
-    if (holder) return reply(message, `会话「${session.name}」正由机器人 ${holder} 开着，不能同时进入。在 ${holder} 那边发 /new 或 /switch 离开后再试。`, 'switch');
+    if (holder) return reply(message, heldText(holder, session, '不能同时进入'), 'switch');
     if (!fs.existsSync(session.cwd)) return reply(message, `会话目录 ${session.cwd} 已不存在，无法恢复这个会话。`, 'switch');
     const terminal = sessions.running().get(session.id);
     // Resuming while a terminal is mid-turn would interleave two writers in one transcript.
@@ -673,12 +693,12 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
     const { session, text, problem } = splitTarget(message, query);
     if (problem) return fail(problem);
     const holder = holderOf(session.id, message);
-    if (holder) return fail(`会话「${session.name}」正由机器人 ${holder} 开着，不能同时使用。在 ${holder} 那边发 /new 或 /switch 离开后再试。`);
+    if (holder) return fail(heldText(holder, session, '不能同时使用'));
     if (!fs.existsSync(session.cwd)) return fail(`会话目录 ${session.cwd} 已不存在，无法恢复这个会话。`);
     if (sessions.running().get(session.id)?.busy && !sessionWork.has(session.id)) return fail(`会话「${session.name}」正在终端里执行任务，等它结束后再发。`);
     const chat = threadKey(message.chat, message.id);
     const stats = sessions.stats?.(session.file);
-    state.sessions[chat] = { id: session.id, cwd: session.cwd, name: session.name, file: session.file, thread: true,
+    state.sessions[chat] = { id: session.id, cwd: session.cwd, name: session.name, file: session.file, thread: true, openUntil: Date.now() + threadHoldMs(),
       updatedAt: new Date().toISOString(), ...(stats?.model ? { stats } : {}) };
     save();
     log('thread_opened', { chatId: message.chat, messageId: message.id });
@@ -707,7 +727,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
   function deleteBlocker(message, session) {
     if (session.id === state.sessions[message.chat]?.id) return ['当前所在的会话', `「${session.name}」是当前所在的会话，不能删除。先 /new 或 /switch 到别的会话再删。`];
     const holder = holderOf(session.id, message);
-    if (holder) return [`正由机器人 ${holder} 开着`, `会话「${session.name}」正由机器人 ${holder} 开着，不能删除。`];
+    if (holder) return [holder.thread ? `正在机器人 ${holder.name} 的话题里使用` : `正由机器人 ${holder.name} 开着`, heldText(holder, session, '不能删除')];
     if (sessions.running().has(session.id) && !sessionWork.has(session.id)) return ['在终端里还开着', `会话「${session.name}」在终端里还开着，先退出那个终端窗口再删除。`];
     if ([...active.keys()].some(chatId => state.sessions[chatId]?.id === session.id)) return ['正在执行任务', `会话「${session.name}」正在${where(message)}的另一个对话里执行任务，等它结束后再删除。`];
     return null;
@@ -775,7 +795,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
 
   // Checked before every turn in an existing session.
   function sessionProblem(target, message) {
-    const way = '发 /switch 换一个会话，或 /new 开新会话。';
+    const way = message.parentChat ? '回到主聊天，用 /to 发给别的会话。' : '发 /switch 换一个会话，或 /new 开新会话。';
     const bot = botOf(message);
     if (!sessionAllowed(bot, target)) return `这个会话不在机器人 ${bot.name} 可以访问的范围内（${scopeText(bot)}），这条消息没有发出。${way}`;
     if (target.file && !fs.existsSync(target.file)) return `会话「${target.name}」的记录已不存在，无法继续。${way}`;
@@ -1055,6 +1075,7 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
       ...(modes ? [`权限模式：${modeLabel(message)}`] : []),
       ...(agent.models ? [`模型：${choiceLabel('model', message)}`] : []),
       ...(agent.efforts ? [`推理深度：${choiceLabel('effort', message)}`] : []),
+      ...(message.parentChat ? [`话题：${holds(message.chat, state.sessions[message.chat]) ? `占用着这个会话，空闲 ${holdMinutes()}后释放（之后别的机器人可以用它，你在话题里再发消息会重新接上）` : '已释放；在话题里发消息会重新接上这个会话'}`] : []),
       `当前会话：${target.name || '新会话（未命名）'}${target.temp ? '（临时会话，离开后自动删除；发 /keep 保留）' : ''}`, `会话 ID：${target.id || '尚未创建'}`, `会话目录：${target.cwd}`,
       ...(state.dirs[message.chat] ? [`新会话目录：${state.dirs[message.chat]}（用 /dir 设置的）`] : []),
       `工作区：${config.workspace}`,
@@ -1094,7 +1115,26 @@ export function createHub({ config, agent, channel, bots: botList, runtime, log 
   }
 
   // ---- message handling ----
+  // Messages of a /to thread: one that uses the session takes it back first, and keeps it for the
+  // hold time after it is done; settings, /help and commands refused in a thread do neither.
   async function handle(message, generation) {
+    if (!message.parentChat) return handleMessage(message, generation);
+    let claimed = Boolean(message.startThread); // /to checked the session when it opened the thread
+    if (!claimed) {
+      const command = (message.text || '').trim();
+      const idle = command === '/help' || [...THREAD_REFUSED, '/mode', '/model', '/effort'].some(name => commandArgs(command, name) !== null);
+      if (!idle) {
+        const record = state.sessions[message.chat];
+        const holder = record?.id && holderOf(record.id, message);
+        if (holder) return reply(message, heldText(holder, record, '这个话题暂时接不上'), 'thread');
+        touchThread(message.chat);
+        claimed = true;
+      }
+    }
+    try { return await handleMessage(message, generation); }
+    finally { if (claimed) touchThread(message.chat); }
+  }
+  async function handleMessage(message, generation) {
     const { channel } = botOf(message);
     if (superseded(message, generation)) return;
     const text = (message.text || '').trim();

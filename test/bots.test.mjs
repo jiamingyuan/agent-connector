@@ -66,7 +66,7 @@ test('two bots share one agent: limited sessions, modes and models, and one bot 
   assert(text[7].startsWith('当前模型：sonnet（默认）') && text[7].includes('claude-haiku-5-5') && !text[7].includes('opus'), text[7]);
   assert.match(text[10], /^已进入会话「alpha 项目」/);
   for (const line of ['机器人：Dana', `可访问的会话：${project} 目录下的会话`, '可用权限模式：auto、plan', '可用模型：sonnet、claude-haiku-5-5']) assert(text[11].includes(line), text[11]);
-  assert.equal(text[12], '会话「alpha 项目」正由机器人 Dana 开着，不能删除。');
+  assert.equal(text[12], '会话「alpha 项目」正由机器人 Dana 开着，不能删除。在 Dana 那边发 /new 或 /switch 离开后再试。');
   assert(text[13].includes('机器人：Cora') && text[13].includes('推理深度：high（/effort 切换）') && !text[13].includes('可访问的会话'), text[13]);
   // Dana's new session starts in the first directory it may use, on the first model it may use.
   const flag = (call, name) => (call.args.includes(name) ? call.args[call.args.indexOf(name) + 1] : null);
